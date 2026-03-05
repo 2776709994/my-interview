@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper">
+
+    <!-- 自定义插入语句，解决 vector 类型转换问题 -->
+    <insert id="insertVectorDocument" parameterType="com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument">
+        INSERT INTO knowledge_documents (
+            name, category, file_name, content, content_embedding, 
+            file_size, content_type, storage_key, storage_url, 
+            vector_status, vector_error, chunk_count, question_count, 
+            access_count, uploaded_at, processed_at, last_accessed_at,
+            parent_id, chunk_index
+        ) VALUES (
+            #{name}, #{category}, #{fileName}, #{content}, #{contentEmbedding}::vector, 
+            #{fileSize}, #{contentType}, #{storageKey}, #{storageUrl}, 
+            #{vectorStatus}, #{vectorError}, #{chunkCount}, #{questionCount}, 
+            #{accessCount}, #{uploadedAt}, #{processedAt}, #{lastAccessedAt},
+            #{parentId}, #{chunkIndex}
+        )
+    </insert>
+
+    <!-- 向量相似度检索，返回相似度分数 -->
+    <select id="searchBySimilarityWithScore" resultType="map">
+        <![CDATA[
+        SELECT *, (content_embedding <=> #{queryVector}::vector) AS similarity_score
+        FROM knowledge_documents
+        WHERE parent_id IS NOT NULL
+        ORDER BY similarity_score ASC
+        LIMIT #{limit}
+        ]]>
+    </select>
+
+</mapper>

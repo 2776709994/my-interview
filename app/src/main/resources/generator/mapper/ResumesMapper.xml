@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.edu.muc.app.modules.resume.mapper.ResumesMapper">
+
+    <resultMap id="BaseResultMap" type="com.edu.muc.app.modules.resume.domain.Resumes">
+            <id property="id" column="id" />
+            <result property="accessCount" column="access_count" />
+            <result property="analyzeError" column="analyze_error" />
+            <result property="analyzeStatus" column="analyze_status" />
+            <result property="contentType" column="content_type" />
+            <result property="fileHash" column="file_hash" />
+            <result property="fileSize" column="file_size" />
+            <result property="lastAccessedAt" column="last_accessed_at" />
+            <result property="originalFilename" column="original_filename" />
+            <result property="resumeText" column="resume_text" />
+            <result property="storageKey" column="storage_key" />
+            <result property="storageUrl" column="storage_url" />
+            <result property="uploadedAt" column="uploaded_at" />
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,access_count,analyze_error,analyze_status,content_type,file_hash,
+        file_size,last_accessed_at,original_filename,resume_text,storage_key,
+        storage_url,uploaded_at
+    </sql>
+</mapper>

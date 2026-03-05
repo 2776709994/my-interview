@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.edu.muc.app.modules.resume.mapper.ResumeAnalysesMapper">
+
+    <resultMap id="BaseResultMap" type="generator.domain.ResumeAnalyses">
+            <id property="id" column="id" />
+            <result property="analyzedAt" column="analyzed_at" />
+            <result property="contentScore" column="content_score" />
+            <result property="expressionScore" column="expression_score" />
+            <result property="overallScore" column="overall_score" />
+            <result property="projectScore" column="project_score" />
+            <result property="skillMatchScore" column="skill_match_score" />
+            <result property="strengthsJson" column="strengths_json" />
+            <result property="structureScore" column="structure_score" />
+            <result property="suggestionsJson" column="suggestions_json" />
+            <result property="summary" column="summary" />
+            <result property="resumeId" column="resume_id" />
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,analyzed_at,content_score,expression_score,overall_score,project_score,
+        skill_match_score,strengths_json,structure_score,suggestions_json,summary,
+        resume_id
+    </sql>
+</mapper>
