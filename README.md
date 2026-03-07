@@ -1,6 +1,6 @@
 # 智能面试助手 (Smart Interview Assistant)
 
-> 🎯 基于 [Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide) 二次开发 | 全栈项目 | 用于技术面试展示
+> 🎯 基于 [Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide) 学习实践 | 全栈项目
 
 [![Java](https://img.shields.io/badge/Java-17-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.4-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -13,7 +13,7 @@
 
 ## 📜 项目说明
 
-本项目基于开源项目 [Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide) 进行二次开发，在原项目基础上进行了以下优化和改进：
+本项目基于开源项目 [Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide) 用maven复刻，在原项目基础上进行了以下优化和改进：
 
 ### 🛠️ 主要改进
 
