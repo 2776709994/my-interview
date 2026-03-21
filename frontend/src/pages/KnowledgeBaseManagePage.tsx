@@ -97,15 +97,16 @@ function StatCard({
     <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="bg-white dark:bg-slate-800 rounded-xl p-6 shadow-sm border border-slate-100 dark:border-slate-700"
+      whileHover={{ y: -4, scale: 1.02 }}
+      className="bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl p-6 shadow-lg shadow-slate-200/30 dark:shadow-slate-900/30 border border-slate-200/50 dark:border-slate-700/50"
     >
       <div className="flex items-center gap-4">
-        <div className={`p-3 rounded-lg ${color}`}>
+        <div className={`p-3.5 rounded-xl ${color} shadow-lg`}>
           <Icon className="w-6 h-6 text-white" />
         </div>
         <div>
-            <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
-            <p className="text-2xl font-bold text-slate-800 dark:text-white">{value.toLocaleString()}</p>
+            <p className="text-sm text-slate-500 dark:text-slate-400 font-medium">{label}</p>
+            <p className="text-3xl font-bold text-slate-800 dark:text-white">{value.toLocaleString()}</p>
         </div>
       </div>
     </motion.div>
@@ -289,31 +290,43 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
   return (
     <div className="max-w-7xl mx-auto">
       {/* 页面标题 */}
-      <div className="flex items-center justify-between mb-8">
+      <motion.div 
+        className="flex items-center justify-between mb-10"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
         <div>
-            <h1 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-3">
-            <Database className="w-7 h-7 text-primary-500" />
-            知识库管理
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-800 via-primary-600 to-accent-600 dark:from-white dark:via-primary-400 dark:to-accent-400 bg-clip-text text-transparent flex items-center gap-3">
+            <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-accent-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary-500/30">
+              <Database className="w-6 h-6" />
+            </div>
+            <span className="bg-clip-text">知识库管理</span>
           </h1>
-            <p className="text-slate-500 dark:text-slate-400 mt-1">管理您的知识库文件，查看使用统计</p>
+          <p className="text-slate-500 dark:text-slate-400 mt-2 text-base">管理您的知识库文件，查看使用统计</p>
         </div>
-        <div className="flex gap-3">
+        <motion.div 
+          className="flex gap-3"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.3 }}
+        >
           <button
             onClick={onUpload}
-            className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors"
+            className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-primary-500 to-primary-600 text-white rounded-xl hover:from-primary-600 hover:to-primary-700 transition-all duration-300 shadow-lg shadow-primary-500/25 hover:shadow-primary-500/40 hover:scale-105 active:scale-95 font-medium"
           >
             <Upload className="w-4 h-4" />
             上传知识库
           </button>
           <button
             onClick={onChat}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+            className="flex items-center gap-2 px-5 py-2.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-700 transition-all duration-300 border border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-600 hover:shadow-md active:scale-95 font-medium"
           >
             <MessageSquare className="w-4 h-4" />
             问答助手
           </button>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
       {/* 统计卡片 */}
       {stats && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -339,19 +352,23 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
       )}
 
       {/* 搜索和筛选栏 */}
-        <div
-            className="bg-white dark:bg-slate-800 rounded-xl p-4 shadow-sm border border-slate-100 dark:border-slate-700 mb-6">
+        <motion.div
+            className="bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl p-5 shadow-lg shadow-slate-200/20 dark:shadow-slate-900/20 border border-slate-200/50 dark:border-slate-700/50 mb-8"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+        >
         <div className="flex flex-wrap items-center gap-4">
           {/* 搜索框 */}
           <form onSubmit={handleSearch} className="flex-1 min-w-[200px]">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="text"
                 value={searchKeyword}
                 onChange={(e) => setSearchKeyword(e.target.value)}
                 placeholder="搜索知识库名称..."
-                className="w-full pl-10 pr-4 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                className="w-full pl-12 pr-4 py-3 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-4 focus:ring-primary-500/10 dark:focus:ring-primary-500/20 focus:border-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white transition-all duration-300"
               />
             </div>
           </form>
@@ -365,7 +382,7 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
                 setSearchKeyword('');
                 setSelectedCategory(null);
               }}
-              className="appearance-none pl-4 pr-10 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer"
+              className="appearance-none pl-4 pr-10 py-3 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-4 focus:ring-primary-500/10 dark:focus:ring-primary-500/20 focus:border-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer transition-all duration-300"
             >
               <option value="time">按时间排序</option>
               <option value="size">按大小排序</option>
@@ -383,7 +400,7 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
                 setSelectedCategory(e.target.value || null);
                 setSearchKeyword('');
               }}
-              className="appearance-none pl-4 pr-10 py-2 border border-slate-200 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer"
+              className="appearance-none pl-4 pr-10 py-3 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-4 focus:ring-primary-500/10 dark:focus:ring-primary-500/20 focus:border-primary-500 bg-white dark:bg-slate-700 text-slate-900 dark:text-white cursor-pointer transition-all duration-300"
             >
               <option value="">全部分类</option>
               {categories.map((cat) => (
@@ -395,11 +412,15 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
           </div>
         </div>
-      </div>
+      </motion.div>
 
       {/* 知识库列表 */}
-        <div
-            className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 overflow-hidden">
+        <motion.div
+            className="bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl shadow-xl shadow-slate-200/30 dark:shadow-slate-900/30 overflow-hidden border border-slate-200/50 dark:border-slate-700/50"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+        >
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-primary-500 animate-spin" />
@@ -417,27 +438,27 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
           </div>
         ) : (
           <table className="w-full">
-              <thead className="bg-slate-50 dark:bg-slate-700 border-b border-slate-100 dark:border-slate-600">
+              <thead className="bg-slate-50/80 dark:bg-slate-700/50 border-b border-slate-200/50 dark:border-slate-600/50">
               <tr>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
                   名称
                 </th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
                   分类
                 </th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
                   大小
                 </th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
                   状态
                 </th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
                   提问
                 </th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                  <th className="text-left px-6 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
                   上传时间
                 </th>
-                  <th className="text-right px-6 py-4 text-sm font-medium text-slate-600 dark:text-slate-300">
+                  <th className="text-right px-6 py-4 text-sm font-semibold text-slate-600 dark:text-slate-300">
                   操作
                 </th>
               </tr>
@@ -449,13 +470,15 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05 }}
-                  className="border-b border-slate-50 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors"
+                  className="border-b border-slate-100/50 dark:border-slate-700/50 hover:bg-primary-50/50 dark:hover:bg-primary-900/10 transition-colors"
                 >
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
-                      <FileText className="w-5 h-5 text-slate-400" />
+                      <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-lg flex items-center justify-center">
+                        <FileText className="w-5 h-5 text-slate-400" />
+                      </div>
                       <div>
-                          <p className="font-medium text-slate-800 dark:text-white">{kb.name}</p>
+                          <p className="font-semibold text-slate-800 dark:text-white">{kb.name}</p>
                           <p className="text-xs text-slate-400 dark:text-slate-500">{kb.originalFilename}</p>
                       </div>
                     </div>
@@ -517,7 +540,7 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
                         >
                           {kb.category ? (
                               <span
-                                  className="px-2 py-1 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded text-sm">
+                                  className="px-2.5 py-1 bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 rounded-lg text-sm font-medium">
                               {kb.category}
                             </span>
                           ) : (
@@ -534,18 +557,18 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
                       )}
                     </AnimatePresence>
                   </td>
-                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300 font-medium">
                     {formatFileSize(kb.fileSize)}
                   </td>
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
                       <StatusIcon status={kb.vectorStatus} />
-                        <span className="text-sm text-slate-600 dark:text-slate-300">
+                        <span className="text-sm text-slate-600 dark:text-slate-300 font-medium">
                         {getStatusText(kb.vectorStatus)}
                       </span>
                     </div>
                   </td>
-                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300">
+                    <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-300 font-medium">
                     {kb.questionCount}
                   </td>
                     <td className="px-6 py-4 text-sm text-slate-500 dark:text-slate-400">
@@ -587,7 +610,7 @@ export default function KnowledgeBaseManagePage({ onUpload, onChat }: KnowledgeB
             </tbody>
           </table>
         )}
-      </div>
+      </motion.div>
 
       {/* 删除确认对话框 */}
       <DeleteConfirmDialog

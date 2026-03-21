@@ -360,15 +360,25 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
   return (
     <div className="max-w-7xl mx-auto pt-8 pb-10 px-4">
       {/* 头部 */}
-      <div className="flex items-center justify-between mb-6">
+      <motion.div 
+        className="flex items-center justify-between mb-8"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">问答助手</h1>
-          <p className="text-slate-500 dark:text-slate-400 text-sm">选择知识库，向 AI 提问</p>
+          <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-800 via-primary-600 to-accent-600 dark:from-white dark:via-primary-400 dark:to-accent-400 bg-clip-text text-transparent mb-1">问答助手</h1>
+          <p className="text-slate-500 dark:text-slate-400 text-base">选择知识库，向 AI 提问</p>
         </div>
-        <div className="flex gap-3">
+        <motion.div 
+          className="flex gap-3"
+          initial={{ opacity: 0, x: 20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.3 }}
+        >
           <motion.button
             onClick={onUpload}
-            className="px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-sm"
+            className="px-5 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-primary-300 dark:hover:border-primary-600 transition-all text-sm shadow-sm hover:shadow-md"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
           >
@@ -376,20 +386,25 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
           </motion.button>
           <motion.button
             onClick={onBack}
-            className="px-4 py-2 border border-slate-200 dark:border-slate-600 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-all text-sm"
+            className="px-5 py-2.5 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 hover:border-primary-300 dark:hover:border-primary-600 transition-all text-sm shadow-sm hover:shadow-md"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
           >
             返回
           </motion.button>
-        </div>
-      </div>
+        </motion.div>
+      </motion.div>
 
       <div className="flex gap-4 h-[calc(100vh-10rem)]">
         {/* 左侧：对话历史 */}
-        <div className="w-64 flex-shrink-0">
+        <motion.div 
+          className="w-64 flex-shrink-0"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ delay: 0.2 }}
+        >
           <div
-              className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-sm h-full flex flex-col border border-slate-100 dark:border-slate-700">
+              className="bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl p-4 shadow-lg shadow-slate-200/20 dark:shadow-slate-900/20 h-full flex flex-col border border-slate-200/50 dark:border-slate-700/50">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-semibold text-slate-800 dark:text-white">对话历史</h2>
               <motion.button
@@ -420,13 +435,14 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
               ) : (
                 <div className="space-y-2">
                   {sessions.map((session) => (
-                    <div
+                    <motion.div
                       key={session.id}
                       onClick={() => handleLoadSession(session.id)}
-                      className={`p-3 rounded-lg cursor-pointer transition-all group ${currentSessionId === session.id
+                      className={`p-3 rounded-xl cursor-pointer transition-all group ${currentSessionId === session.id
                           ? 'bg-primary-50 dark:bg-primary-900/30 border border-primary-500'
                           : 'bg-slate-50 dark:bg-slate-700/50 hover:bg-slate-100 dark:hover:bg-slate-700 border border-transparent'
                         } ${session.isPinned ? 'border-l-4 border-l-primary-500' : ''}`}
+                      whileHover={{ scale: 1.02 }}
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex-1 min-w-0">
@@ -473,23 +489,28 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                           </button>
                         </div>
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
                 </div>
               )}
             </div>
           </div>
-        </div>
+        </motion.div>
 
         {/* 中间：聊天区域 */}
-        <div className="flex-1 min-w-0">
+        <motion.div 
+          className="flex-1 min-w-0"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+        >
           <div
-              className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm flex flex-col h-full border border-slate-100 dark:border-slate-700">
+              className="bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl shadow-xl shadow-slate-200/30 dark:shadow-slate-900/30 flex flex-col h-full border border-slate-200/50 dark:border-slate-700/50">
             {selectedKbIds.size > 0 ? (
               <>
                 {/* 会话信息 */}
-                <div className="p-4 border-b border-slate-200 dark:border-slate-600">
-                  <h2 className="text-base font-semibold text-slate-800 dark:text-white">
+                <div className="p-5 border-b border-slate-200/50 dark:border-slate-600/50">
+                  <h2 className="text-lg font-semibold text-slate-800 dark:text-white">
                     {currentSessionTitle || (selectedKbIds.size === 1
                       ? knowledgeBases.find(kb => kb.id === Array.from(selectedKbIds)[0])?.name || '新对话'
                       : `${selectedKbIds.size} 个知识库 - 新对话`)}
@@ -499,7 +520,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                       const kb = knowledgeBases.find(k => k.id === kbId);
                       return kb ? (
                           <span key={kbId}
-                                className="px-2 py-0.5 bg-primary-50 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 text-xs rounded-full">
+                                className="px-2.5 py-1 bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 text-xs rounded-lg font-medium">
                           {kb.name}
                         </span>
                       ) : null;
@@ -512,7 +533,9 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                   {messages.length === 0 ? (
                       <div
                           className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500">
-                      <MessageSquare className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <div className="w-16 h-16 bg-slate-100 dark:bg-slate-700 rounded-2xl flex items-center justify-center mb-4">
+                        <MessageSquare className="w-8 h-8 opacity-50" />
+                      </div>
                       <p className="text-sm">开始提问吧！</p>
                     </div>
                   ) : (
@@ -531,7 +554,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                           >
                             <div
                               className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${msg.type === 'user'
-                                ? 'bg-primary-600 text-white'
+                                ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-primary-500/20'
                                   : 'bg-white dark:bg-slate-800 border border-slate-100 dark:border-slate-600 text-slate-800 dark:text-slate-100'
                               }`}
                             >
@@ -617,7 +640,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
               </div>
             )}
           </div>
-        </div>
+        </motion.div>
 
         {/* 右侧：知识库选择（简化版） */}
         <AnimatePresence>

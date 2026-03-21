@@ -93,87 +93,104 @@ export default function InterviewHubPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-6xl mx-auto">
       {/* 页面标题 */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-white flex items-center gap-3">
-          <Sparkles className="w-7 h-7 text-primary-500" />
-          模拟面试
+      <motion.div 
+        className="mb-10"
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+      >
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-slate-800 via-primary-600 to-accent-600 dark:from-white dark:via-primary-400 dark:to-accent-400 bg-clip-text text-transparent flex items-center gap-3">
+          <div className="w-12 h-12 bg-gradient-to-br from-primary-500 to-accent-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary-500/30">
+            <Sparkles className="w-6 h-6" />
+          </div>
+          <span className="bg-clip-text">模拟面试</span>
         </h1>
-        <p className="text-slate-500 dark:text-slate-400 mt-1">选择面试模式和方向，快速开始练习</p>
-      </div>
+        <p className="text-slate-500 dark:text-slate-400 mt-2 text-base">选择面试模式和方向，快速开始练习</p>
+      </motion.div>
 
       {/* 配置区域 */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 p-6 mb-8">
+      <motion.div 
+        className="bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl shadow-xl shadow-slate-200/30 dark:shadow-slate-900/30 border border-slate-200/50 dark:border-slate-700/50 p-8 mb-8"
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2 }}
+      >
         <div className="space-y-6">
           {/* 面试方向 */}
-          <div>
-            <label className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">
-              面试方向
-            </label>
-            {config.loadingSkills ? (
-              <div className="flex items-center gap-2 py-4 text-slate-400">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span className="text-sm">加载中...</span>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                {config.skills.map(skill => {
-                  const selected = config.skillId === skill.id;
-                  const IconComponent = getSkillIcon(skill.id);
-                  const fallbackEmoji = skill.display?.icon || '📋';
-                  return (
-                    <button
-                      key={skill.id}
-                      onClick={() => config.setSkillId(skill.id)}
-                      className={`flex items-center gap-2.5 p-3 rounded-xl border-2 transition-all duration-200 text-left
-                        ${selected
-                          ? 'border-primary-500 bg-primary-50/80 dark:bg-primary-900/20'
-                          : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600'
-                        }`}
-                    >
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm flex-shrink-0 ${
-                        selected ? skill.display?.iconBg || 'bg-primary-100 dark:bg-primary-900/50' : 'bg-slate-100 dark:bg-slate-700'
-                      }`}>
-                        {IconComponent
-                          ? <IconComponent className={`w-4 h-4 ${selected ? (skill.display?.iconColor || 'text-primary-600') : 'text-slate-500 dark:text-slate-400'}`} />
-                          : <span className={selected ? (skill.display?.iconColor || 'text-primary-600') : ''}>{fallbackEmoji}</span>
-                        }
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <span className={`text-xs font-medium block truncate ${selected ? 'text-primary-700 dark:text-primary-300' : 'text-slate-700 dark:text-slate-300'}`}>
-                          {skill.name}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
-                {/* 自定义按钮 */}
-                <button
-                  onClick={() => config.setSkillId(CUSTOM_SKILL_ID)}
-                  className={`flex items-center gap-2.5 p-3 rounded-xl border-2 border-dashed transition-all duration-200 text-left
-                    ${config.isCustomSkill
-                      ? 'border-primary-500 bg-primary-50/80 dark:bg-primary-900/20'
-                      : 'border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-600'
-                    }`}
-                >
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                    config.isCustomSkill ? 'bg-primary-100 dark:bg-primary-900/50' : 'bg-slate-100 dark:bg-slate-700'
-                  }`}>
-                    {(() => {
-                      const CustomIcon = getSkillIcon(CUSTOM_SKILL_ID);
-                      return CustomIcon
-                        ? <CustomIcon className={`w-4 h-4 ${config.isCustomSkill ? 'text-primary-600 dark:text-primary-400' : 'text-slate-500 dark:text-slate-400'}`} />
-                        : <span className="text-sm">✨</span>;
-                    })()}
-                  </div>
-                  <span className={`text-xs font-medium ${config.isCustomSkill ? 'text-primary-700 dark:text-primary-300' : 'text-slate-500 dark:text-slate-400'}`}>
-                    自定义 JD
-                  </span>
-                </button>
-              </div>
-            )}
-          </div>
+            <div>
+              <label className="flex items-center gap-2 mb-4 text-sm font-bold text-slate-700 dark:text-slate-200">
+                <div className="w-1 h-5 bg-gradient-to-b from-primary-500 to-accent-500 rounded-full" />
+                面试方向
+              </label>
+              {config.loadingSkills ? (
+                <div className="flex items-center gap-3 py-6 px-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl">
+                  <Loader2 className="w-5 h-5 text-primary-500 animate-spin" />
+                  <span className="text-sm text-slate-500 dark:text-slate-400">加载中...</span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {config.skills.map(skill => {
+                    const selected = config.skillId === skill.id;
+                    const IconComponent = getSkillIcon(skill.id);
+                    const fallbackEmoji = skill.display?.icon || '📋';
+                    return (
+                      <motion.button
+                        key={skill.id}
+                        onClick={() => config.setSkillId(skill.id)}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all duration-300 text-left
+                          ${selected
+                            ? 'border-primary-500 bg-gradient-to-br from-primary-50 to-primary-100/50 dark:from-primary-900/30 dark:to-primary-900/20 shadow-lg shadow-primary-500/10'
+                            : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600 hover:shadow-md'
+                          }`}
+                      >
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-base flex-shrink-0 transition-all duration-300 ${
+                          selected ? skill.display?.iconBg || 'bg-primary-500 shadow-md shadow-primary-500/30' : 'bg-slate-100 dark:bg-slate-700'
+                        }`}>
+                          {IconComponent
+                            ? <IconComponent className={`w-5 h-5 ${selected ? (skill.display?.iconColor || 'text-white') : 'text-slate-500 dark:text-slate-400'}`} />
+                            : <span className={selected ? (skill.display?.iconColor || 'text-white') : ''}>{fallbackEmoji}</span>
+                          }
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm font-semibold block truncate ${selected ? 'text-primary-700 dark:text-primary-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                            {skill.name}
+                          </span>
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                  {/* 自定义按钮 */}
+                  <motion.button
+                    onClick={() => config.setSkillId(CUSTOM_SKILL_ID)}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className={`flex items-center gap-3 p-4 rounded-xl border-2 border-dashed transition-all duration-300 text-left
+                      ${config.isCustomSkill
+                        ? 'border-primary-500 bg-gradient-to-br from-primary-50 to-primary-100/50 dark:from-primary-900/30 dark:to-primary-900/20 shadow-lg shadow-primary-500/10'
+                        : 'border-slate-300 dark:border-slate-600 hover:border-primary-400 dark:hover:border-primary-500 hover:shadow-md'
+                      }`}
+                  >
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
+                      config.isCustomSkill ? 'bg-primary-500 shadow-md shadow-primary-500/30' : 'bg-slate-100 dark:bg-slate-700'
+                    }`}>
+                      {(() => {
+                        const CustomIcon = getSkillIcon(CUSTOM_SKILL_ID);
+                        return CustomIcon
+                          ? <CustomIcon className={`w-5 h-5 ${config.isCustomSkill ? 'text-white' : 'text-slate-500 dark:text-slate-400'}`} />
+                          : <span className="text-lg">✨</span>;
+                      })()}
+                    </div>
+                    <span className={`text-sm font-semibold ${config.isCustomSkill ? 'text-primary-700 dark:text-primary-300' : 'text-slate-500 dark:text-slate-400'}`}>
+                      自定义 JD
+                    </span>
+                  </motion.button>
+                </div>
+              )}
+            </div>
 
           {/* 自定义 JD 输入 */}
           <AnimatePresence>
@@ -338,7 +355,7 @@ export default function InterviewHubPage() {
             开始面试
           </motion.button>
         </div>
-      </div>
+      </motion.div>
 
       {/* 最近面试记录 */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700 p-6">

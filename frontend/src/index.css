@@ -2,11 +2,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&display=swap');
 @plugin "@tailwindcss/typography";
 
-/* 启用深色模式 - 使用 class 策略 */
 @custom-variant dark (&:where(.dark, .dark *));
 
-
-/* 自定义主题 */
 @theme {
   --color-primary-50: #eef2ff;
   --color-primary-100: #e0e7ff;
@@ -19,6 +16,17 @@
   --color-primary-800: #3730a3;
   --color-primary-900: #312e81;
   --color-primary-950: #1e1b4b;
+
+  --color-accent-50: #fdf4ff;
+  --color-accent-100: #fae8ff;
+  --color-accent-200: #f5d0fe;
+  --color-accent-300: #f0abfc;
+  --color-accent-400: #e879f9;
+  --color-accent-500: #d946ef;
+  --color-accent-600: #c026d3;
+  --color-accent-700: #a21caf;
+  --color-accent-800: #86198f;
+  --color-accent-900: #701a75;
 
   --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
   --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
@@ -35,6 +43,7 @@
     font-family: var(--font-sans);
     @apply bg-gradient-to-br from-slate-50 via-white to-indigo-50 text-slate-900;
     @apply dark:bg-gradient-to-br dark:from-slate-950 dark:via-slate-900 dark:to-slate-800 dark:text-slate-50;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 
   #root {
@@ -45,24 +54,34 @@
     font-family: var(--font-display);
     @apply font-semibold tracking-tight;
   }
+
+  ::selection {
+    @apply bg-primary-200 dark:bg-primary-800 text-primary-900 dark:text-primary-100;
+  }
+
+  ::-moz-selection {
+    @apply bg-primary-200 dark:bg-primary-800 text-primary-900 dark:text-primary-100;
+  }
 }
 
 /* 深色模式通用样式 - 自动应用于所有卡片和容器 */
 @layer components {
-    /* 通用卡片背景 */
     .dark-card {
         @apply bg-white dark:bg-slate-800/95 backdrop-blur-xl rounded-2xl border border-slate-200/50 dark:border-slate-700/50;
         @apply shadow-lg shadow-slate-200/50 dark:shadow-slate-900/50;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
     }
 
-    /* 通用输入框 */
+    .dark-card:hover {
+        @apply shadow-xl shadow-slate-200/60 dark:shadow-slate-900/60;
+    }
+
     .dark-input {
         @apply bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100;
         @apply focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 dark:focus:ring-primary-400/20 dark:focus:border-primary-400;
         @apply transition-all duration-200;
     }
 
-    /* 通用文字颜色 */
     .dark-text {
         @apply text-slate-900 dark:text-slate-50;
     }
@@ -71,7 +90,6 @@
         @apply text-slate-600 dark:text-slate-400;
     }
 
-    /* 按钮基础样式 */
     .btn-primary {
         @apply bg-gradient-to-r from-primary-600 to-primary-500 dark:from-primary-500 dark:to-primary-400;
         @apply text-white font-medium;
@@ -89,10 +107,78 @@
         @apply transition-all duration-200;
     }
 
-    /* 状态徽章 */
     .status-badge {
         @apply px-3 py-1.5 rounded-full text-xs font-semibold tracking-wide uppercase;
         @apply border backdrop-blur-sm;
+    }
+
+    .glass-effect {
+        @apply bg-white/70 dark:bg-slate-800/70 backdrop-blur-xl;
+        @apply border border-white/20 dark:border-slate-700/50;
+    }
+
+    .gradient-border {
+        position: relative;
+        @apply rounded-2xl;
+    }
+
+    .gradient-border::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        padding: 2px;
+        background: linear-gradient(135deg, var(--color-primary-500), var(--color-accent-500));
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+        pointer-events: none;
+    }
+
+    .shimmer {
+        background: linear-gradient(
+            90deg,
+            transparent 0%,
+            rgba(255, 255, 255, 0.4) 50%,
+            transparent 100%
+        );
+        background-size: 200% 100%;
+        animation: shimmer 2s infinite;
+    }
+
+    @keyframes shimmer {
+        0% {
+            background-position: -200% 0;
+        }
+        100% {
+            background-position: 200% 0;
+        }
+    }
+
+    .pulse-glow {
+        animation: pulseGlow 2s ease-in-out infinite;
+    }
+
+    @keyframes pulseGlow {
+        0%, 100% {
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+        }
+        50% {
+            box-shadow: 0 0 40px rgba(99, 102, 241, 0.6);
+        }
+    }
+
+    .float {
+        animation: float 3s ease-in-out infinite;
+    }
+
+    @keyframes float {
+        0%, 100% {
+            transform: translateY(0);
+        }
+        50% {
+            transform: translateY(-10px);
+        }
     }
 }
 
