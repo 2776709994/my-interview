@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     last_accessed_at TIMESTAMP
 );
 
+-- 为向量列创建 HNSW 索引（加速余弦相似度检索）
+CREATE INDEX IF NOT EXISTS idx_knowledge_doc_embedding_hnsw 
+ON knowledge_documents 
+USING hnsw (content_embedding vector_cosine_ops);
+
 -- 简历表
 CREATE TABLE IF NOT EXISTS resumes (
     id BIGSERIAL PRIMARY KEY,

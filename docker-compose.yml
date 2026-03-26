@@ -176,13 +176,13 @@ services:
   #   - 提供用户界面
   #   - 反向代理 API 请求（通常在 Nginx 配置中处理）
   # =========================================
-  frontend:
-    build: ./frontend
-    container_name: interview-frontend
-    depends_on:
-      - app
-    ports:
-      - "80:80"
+#  frontend:
+#    build: ./frontend
+#    container_name: interview-frontend
+#    depends_on:
+#      - app
+#    ports:
+#      - "80:80"
 
 # =========================================
 # 定义 Docker 卷 (Volumes)
