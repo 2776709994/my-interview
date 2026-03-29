@@ -29,6 +29,7 @@ public class GlobalExceptionHandler {
         response.put("errorCode", e.getErrorCode());
         response.put("timestamp", LocalDateTime.now().toString());
         return response;
+
     }
     
     /**

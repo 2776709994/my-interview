@@ -16,7 +16,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
-@Service   // 只保留 @Service，保证容器一定会创建这个 Bean
+@Service
 public class MinioFileStorageService implements FileStorageService {
 
     private final MinioClient minioClient;

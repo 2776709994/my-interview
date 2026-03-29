@@ -48,7 +48,7 @@ public class InterviewEvaluationConsumer {
                                       InterviewQuestionMapper questionMapper,
                                       InterviewAnswerMapper answerMapper,
                                       ChatClient chatClient,
-                                      @org.springframework.beans.factory.annotation.Qualifier("resumeAnalysisExecutor") 
+                                      @org.springframework.beans.factory.annotation.Qualifier("interviewEvaluationExecutor") 
                                       ExecutorService executor) {
         this.redisTemplate = redisTemplate;
         this.sessionMapper = sessionMapper;
@@ -83,21 +83,18 @@ public class InterviewEvaluationConsumer {
                     if (messages != null && !messages.isEmpty()) {
                         for (MapRecord<String, Object, Object> record : messages) {
                             String sessionId = (String) record.getValue().get("sessionId");
+                            RecordId recordId = record.getId();
                             
-                            // 提交到线程池异步处理
+                            // 提交到线程池异步处理，处理完成后再 ACK
                             executor.submit(() -> {
                                 try {
                                     processInterviewEvaluation(sessionId);
+                                    // 只有处理成功才 ACK
+                                    redisTemplate.opsForStream().acknowledge(STREAM_KEY, GROUP, recordId);
                                 } catch (Exception e) {
-                                    log.error("❌ 面试评估任务异常, sessionId: {}", sessionId, e);
+                                    log.error("❌ 面试评估任务异常，消息将保留在 PEL 中等待重试，sessionId: {}", sessionId, e);
                                 }
                             });
-                            
-                            // 确认消息处理完成
-                            redisTemplate.opsForStream().acknowledge(STREAM_KEY, GROUP, record.getId());
-                            
-                            // 自动清理：最多保留 100 条消息
-                            redisTemplate.opsForStream().trim(STREAM_KEY, 100, false);
                         }
                     }
                 } catch (org.springframework.data.redis.RedisConnectionFailureException e) {

@@ -81,18 +81,18 @@ public class ResumeAnalysisConsumer {
                     if (messages != null && !messages.isEmpty()) {
                         for (MapRecord<String, Object, Object> record : messages) {
                             String resumeId = (String) record.getValue().get("resumeId");
-//                            processResumeAnalysis(Long.parseLong(resumeId));
+                            RecordId recordId = record.getId();
+                            
+                            // 提交到线程池异步处理，处理完成后再 ACK
                             executor.submit(() -> {
                                 try {
                                     processResumeAnalysis(Long.parseLong(resumeId));
+                                    // 只有处理成功才 ACK
+                                    redisTemplate.opsForStream().acknowledge(STREAM_KEY, GROUP, recordId);
                                 } catch (Exception e) {
-                                    log.error("分析任务异常", e);
+                                    log.error("❌ 分析任务异常，消息将保留在 PEL 中等待重试，resumeId: {}", resumeId, e);
                                 }
                             });
-                            // 确认消息处理完成
-                            redisTemplate.opsForStream().acknowledge(STREAM_KEY, GROUP, record.getId());
-                            // 自动清理：最多保留 100 条消息
-                            redisTemplate.opsForStream().trim(STREAM_KEY, 20, false);
                         }
                     }
                 } catch (org.springframework.data.redis.RedisConnectionFailureException e) {
@@ -123,7 +123,7 @@ public class ResumeAnalysisConsumer {
     }
 
     /**
-     * 应用关闭时优雅关闭线程池
+     * 应用关闭时关闭线程池
      */
     @PreDestroy
     public void shutdown() {

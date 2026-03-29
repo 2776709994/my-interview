@@ -26,12 +26,6 @@ public class AiConfig {
         return tika;
     }
 
-    /**
-     * 异步任务线程池（用于 RAG 流式查询）
-     */
-    @Bean
-    public ExecutorService executorService() {
-        return Executors.newFixedThreadPool(5);
-    }
+
 }
 

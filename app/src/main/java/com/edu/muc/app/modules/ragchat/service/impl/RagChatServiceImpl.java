@@ -28,11 +28,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
+
 public class RagChatServiceImpl implements RagChatService {
 
     private final ChatSessionMapper sessionMapper;
@@ -42,6 +43,26 @@ public class RagChatServiceImpl implements RagChatService {
     private final EmbeddingModel embeddingModel;
     private final ChatClient chatClient;
     private final SmartRetrievalService smartRetrievalService;
+    private final ExecutorService ragQueryExecutor;
+
+    public RagChatServiceImpl(ChatSessionMapper sessionMapper,
+                              ChatMessageMapper messageMapper,
+                              KnowledgeDocumentMapper documentMapper,
+                              ObjectMapper objectMapper,
+                              EmbeddingModel embeddingModel,
+                              ChatClient chatClient,
+                              SmartRetrievalService smartRetrievalService,
+                              @org.springframework.beans.factory.annotation.Qualifier("ragQueryExecutor") 
+                              ExecutorService ragQueryExecutor) {
+        this.sessionMapper = sessionMapper;
+        this.messageMapper = messageMapper;
+        this.documentMapper = documentMapper;
+        this.objectMapper = objectMapper;
+        this.embeddingModel = embeddingModel;
+        this.chatClient = chatClient;
+        this.smartRetrievalService = smartRetrievalService;
+        this.ragQueryExecutor = ragQueryExecutor;
+    }
 
     @Override
     @Transactional
@@ -312,7 +333,7 @@ public class RagChatServiceImpl implements RagChatService {
                 log.error("❌ SSE 查询异常", e);
                 emitter.completeWithError(e);
             }
-        }, java.util.concurrent.Executors.newCachedThreadPool());
+        }, ragQueryExecutor);  // ✅ 使用配置的线程池
         
         return emitter;
     }

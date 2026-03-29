@@ -9,7 +9,6 @@ import com.edu.muc.app.modules.knowledgebase.dto.KnowledgeStatsDTO;
 import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
 import com.edu.muc.app.modules.knowledgebase.service.KnowledgeDocumentService;
 import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.tika.Tika;
 import org.springframework.ai.chat.client.ChatClient;
@@ -35,7 +34,6 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
     private final KnowledgeDocumentMapper documentMapper;
@@ -45,6 +43,23 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     private final ChatClient chatClient;
     private final ExecutorService executorService;
     private final SmartRetrievalService smartRetrievalService;
+
+    public KnowledgeDocumentServiceImpl(KnowledgeDocumentMapper documentMapper,
+                                        FileStorageService fileStorageService,
+                                        EmbeddingModel embeddingModel,
+                                        Tika tika,
+                                        ChatClient chatClient,
+                                        @org.springframework.beans.factory.annotation.Qualifier("ragQueryExecutor") 
+                                        ExecutorService executorService,
+                                        SmartRetrievalService smartRetrievalService) {
+        this.documentMapper = documentMapper;
+        this.fileStorageService = fileStorageService;
+        this.embeddingModel = embeddingModel;
+        this.tika = tika;
+        this.chatClient = chatClient;
+        this.executorService = executorService;
+        this.smartRetrievalService = smartRetrievalService;
+    }
 
     @Override
     @Transactional(rollbackFor = Exception.class)

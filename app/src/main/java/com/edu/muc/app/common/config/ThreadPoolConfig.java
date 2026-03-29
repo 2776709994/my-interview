@@ -47,4 +47,62 @@ public class ThreadPoolConfig {
         
         return executor;
     }
+
+    /**
+     * RAG 查询通用线程池
+     * 用于知识库检索、流式问答等 IO 密集型任务
+     */
+    @Bean("ragQueryExecutor")
+    public ExecutorService ragQueryExecutor() {
+        int corePoolSize = 5;           // 核心线程数
+        int maximumPoolSize = 10;       // 最大线程数
+        long keepAliveTime = 60L;       // 空闲线程存活时间（秒）
+        int queueCapacity = 200;        // 队列容量
+        
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                corePoolSize,
+                maximumPoolSize,
+                keepAliveTime,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(queueCapacity),
+                new CustomizableThreadFactory("rag-query-"),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+        
+        executor.allowCoreThreadTimeOut(true);
+        
+        log.info("✅ RAG 查询线程池已创建: core={}, max={}, queue={}", 
+                corePoolSize, maximumPoolSize, queueCapacity);
+        
+        return executor;
+    }
+
+    /**
+     * 面试评估专用线程池
+     * 用于处理面试会话的 AI 评估任务
+     */
+    @Bean("interviewEvaluationExecutor")
+    public ExecutorService interviewEvaluationExecutor() {
+        int corePoolSize = 2;           // 核心线程数
+        int maximumPoolSize = 4;        // 最大线程数
+        long keepAliveTime = 60L;       // 空闲线程存活时间（秒）
+        int queueCapacity = 50;         // 队列容量
+        
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                corePoolSize,
+                maximumPoolSize,
+                keepAliveTime,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(queueCapacity),
+                new CustomizableThreadFactory("interview-eval-"),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+        
+        executor.allowCoreThreadTimeOut(true);
+        
+        log.info("✅ 面试评估线程池已创建: core={}, max={}, queue={}", 
+                corePoolSize, maximumPoolSize, queueCapacity);
+        
+        return executor;
+    }
 }
