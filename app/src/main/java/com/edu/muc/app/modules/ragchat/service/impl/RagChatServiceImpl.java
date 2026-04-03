@@ -2,6 +2,8 @@ package com.edu.muc.app.modules.ragchat.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.edu.muc.app.common.JsonUtils;
+import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
 import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
 import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
@@ -27,6 +29,7 @@ import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
@@ -79,7 +82,7 @@ public class RagChatServiceImpl implements RagChatService {
             log.info("✅ 创建 RAG 聊天会话成功，ID: {}", session.getId());
             return session;
         } catch (JsonProcessingException e) {
-            throw new RuntimeException("序列化知识库ID失败", e);
+            throw new BusinessException("SERIALIZATION_ERROR", "序列化知识库ID失败", e);
         }
     }
 
@@ -91,6 +94,35 @@ public class RagChatServiceImpl implements RagChatService {
                         .orderByDesc(ChatSession::getUpdatedAt)
         );
 
+        if (sessions.isEmpty()) {
+            return List.of();
+        }
+
+        // 批量查询所有会话的消息数（避免 N+1）
+        List<Long> sessionIds = sessions.stream().map(ChatSession::getId).toList();
+        List<ChatMessage> allMessages = messageMapper.selectList(
+                new LambdaQueryWrapper<ChatMessage>()
+                        .in(ChatMessage::getSessionId, sessionIds)
+        );
+        Map<Long, Long> messageCountMap = allMessages.stream()
+                .collect(Collectors.groupingBy(ChatMessage::getSessionId, Collectors.counting()));
+
+        // 批量查询所有知识库ID对应的文档
+        List<Long> allKbIds = new ArrayList<>();
+        for (ChatSession session : sessions) {
+            try {
+                List<Long> kbIds = objectMapper.readValue(session.getKnowledgeBaseIds(),
+                        new TypeReference<List<Long>>() {});
+                allKbIds.addAll(kbIds);
+            } catch (JsonProcessingException e) {
+                log.warn("解析会话 {} 的知识库ID失败", session.getId());
+            }
+        }
+        List<KnowledgeDocument> allDocs = allKbIds.isEmpty() ? List.of()
+                : documentMapper.selectBatchIds(allKbIds);
+        Map<Long, String> kbNameMap = allDocs.stream()
+                .collect(Collectors.toMap(KnowledgeDocument::getId, KnowledgeDocument::getName, (a, b) -> a));
+
         return sessions.stream().map(session -> {
             RagChatSessionListItem item = new RagChatSessionListItem();
             item.setId(session.getId());
@@ -98,30 +130,21 @@ public class RagChatServiceImpl implements RagChatService {
             item.setIsPinned(session.getIsPinned());
             item.setUpdatedAt(session.getUpdatedAt() != null ? session.getUpdatedAt().toString() : null);
 
-            // 统计消息数量
-            Long count = messageMapper.selectCount(
-                    new LambdaQueryWrapper<ChatMessage>()
-                            .eq(ChatMessage::getSessionId, session.getId())
-            );
+            // 从预加载的 Map 中获取消息数
+            Long count = messageCountMap.getOrDefault(session.getId(), 0L);
             item.setMessageCount(count.intValue());
 
-            // 获取知识库名称
+            // 从预加载的 Map 中获取知识库名称
             try {
-                List<Long> kbIds = objectMapper.readValue(
-                        session.getKnowledgeBaseIds(), 
-                        new TypeReference<List<Long>>() {}
-                );
-                if (!kbIds.isEmpty()) {
-                    List<KnowledgeDocument> docs = documentMapper.selectBatchIds(kbIds);
-                    List<String> names = docs.stream()
-                            .map(KnowledgeDocument::getName)
-                            .collect(Collectors.toList());
-                    item.setKnowledgeBaseNames(names);
-                } else {
-                    item.setKnowledgeBaseNames(new ArrayList<>());
-                }
+                List<Long> kbIds = objectMapper.readValue(session.getKnowledgeBaseIds(),
+                        new TypeReference<List<Long>>() {});
+                List<String> names = kbIds.stream()
+                        .map(kbNameMap::get)
+                        .filter(name -> name != null)
+                        .toList();
+                item.setKnowledgeBaseNames(names);
             } catch (JsonProcessingException e) {
-                log.error("解析知识库ID失败", e);
+                log.warn("解析会话 {} 的知识库ID失败", session.getId());
                 item.setKnowledgeBaseNames(new ArrayList<>());
             }
 
@@ -133,7 +156,7 @@ public class RagChatServiceImpl implements RagChatService {
     public RagChatSessionDetail getSessionDetail(Long sessionId) {
         ChatSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
-            throw new RuntimeException("会话不存在");
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
 
         RagChatSessionDetail detail = new RagChatSessionDetail();
@@ -175,7 +198,7 @@ public class RagChatServiceImpl implements RagChatService {
     public void updateSessionTitle(Long sessionId, String title) {
         ChatSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
-            throw new RuntimeException("会话不存在");
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
         
         session.setTitle(title);
@@ -188,7 +211,7 @@ public class RagChatServiceImpl implements RagChatService {
     public void updateKnowledgeBases(Long sessionId, List<Long> knowledgeBaseIds) {
         ChatSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
-            throw new RuntimeException("会话不存在");
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
         
         try {
@@ -196,7 +219,7 @@ public class RagChatServiceImpl implements RagChatService {
             session.setUpdatedAt(LocalDateTime.now());
             sessionMapper.updateById(session);
         } catch (JsonProcessingException e) {
-            throw new RuntimeException("序列化知识库ID失败", e);
+            throw new BusinessException("SERIALIZATION_ERROR", "序列化知识库ID失败", e);
         }
     }
 
@@ -205,7 +228,7 @@ public class RagChatServiceImpl implements RagChatService {
     public void togglePin(Long sessionId) {
         ChatSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
-            throw new RuntimeException("会话不存在");
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
         
         session.setIsPinned(!session.getIsPinned());
@@ -255,7 +278,7 @@ public class RagChatServiceImpl implements RagChatService {
 
                 // 1. 将问题向量化
                 float[] qEmbedding = embeddingModel.embed(question);
-                String qJson = convertEmbeddingToJson(qEmbedding);
+                String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
                 
                 // 2. 智能检索相关文档片段（带相似度过滤）
                 List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson);
@@ -336,20 +359,5 @@ public class RagChatServiceImpl implements RagChatService {
         }, ragQueryExecutor);  // ✅ 使用配置的线程池
         
         return emitter;
-    }
-
-    /**
-     * 将向量数组转换为 JSON 字符串
-     */
-    private String convertEmbeddingToJson(float[] embedding) {
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < embedding.length; i++) {
-            sb.append(embedding[i]);
-            if (i < embedding.length - 1) {
-                sb.append(",");
-            }
-        }
-        sb.append("]");
-        return sb.toString();
     }
 }

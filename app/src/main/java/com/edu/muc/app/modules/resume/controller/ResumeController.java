@@ -1,37 +1,29 @@
 package com.edu.muc.app.modules.resume.controller;
 
 
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.edu.muc.app.common.Result;
 import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
-import com.edu.muc.app.modules.resume.domain.ResumeAnalyses;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
-import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
 import com.edu.muc.app.modules.resume.service.ResumesService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 
 @Slf4j
 @RestController
 @RequestMapping("/api/resumes")
+@RequiredArgsConstructor
 public class ResumeController {
 
-
-    @Autowired
-    private ResumesService resumesService;
-    @Autowired
-    private RedisStreamProducer streamProducer;
+    private final ResumesService resumesService;
+    private final RedisStreamProducer streamProducer;
 
 
 
@@ -55,19 +47,14 @@ public class ResumeController {
      * @throws Exception
      */
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public Result<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
-        try {
-            Resumes resume = resumesService.upload(file);
+    public Result<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) throws Exception {
+        Resumes resume = resumesService.upload(file);
 
-            Map<String, Object> result = new HashMap<>();
-            result.put("duplicate", false);
-            result.put("storage", Map.of("resumeId", resume.getId()));
+        Map<String, Object> result = new HashMap<>();
+        result.put("duplicate", false);
+        result.put("storage", Map.of("resumeId", resume.getId()));
 
-            return Result.success(result);
-        } catch (Exception e) {
-            log.error("简历上传失败: {}", e.getMessage());
-            return Result.error(500, "上传失败，请稍后重试");
-        }
+        return Result.success(result);
     }
 
     /**

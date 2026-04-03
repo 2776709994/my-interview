@@ -1,6 +1,7 @@
 package com.edu.muc.app.modules.interview.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.edu.muc.app.common.JsonUtils;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
 import com.edu.muc.app.modules.interview.domain.InterviewAnswer;
@@ -196,10 +197,10 @@ public class InterviewServiceImpl implements InterviewService {
             log.debug("🔍 AI 原始响应内容: {}", aiResponse);
             
             // 尝试提取 JSON 部分
-            String jsonStr = extractJson(aiResponse);
+            String jsonStr = JsonUtils.extractJson(aiResponse);
             log.info("✅ 提取的 JSON 字符串长度: {}", jsonStr.length());
             log.debug("✅ 提取的 JSON: {}", jsonStr);
-            
+
             Map<String, Object> result = objectMapper.readValue(jsonStr, new TypeReference<Map<String, Object>>() {});
             log.info("✅ JSON 解析成功，keys: {}", result.keySet());
             
@@ -254,21 +255,6 @@ public class InterviewServiceImpl implements InterviewService {
     }
 
     /**
-     * 从文本中提取 JSON
-     */
-    private String extractJson(String text) {
-        // 查找第一个 { 和最后一个 }
-        int start = text.indexOf('{');
-        int end = text.lastIndexOf('}');
-        
-        if (start != -1 && end != -1 && end > start) {
-            return text.substring(start, end + 1);
-        }
-        
-        return text;
-    }
-
-    /**
      * 降级方案：生成预设问题
      */
     private List<InterviewQuestionDTO> generateFallbackQuestions(CreateInterviewRequest request) {
@@ -301,7 +287,7 @@ public class InterviewServiceImpl implements InterviewService {
     public InterviewSessionDTO getSession(String sessionId) {
         InterviewSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
-            throw new RuntimeException("会话不存在");
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
         return convertToDTO(session);
     }
@@ -310,10 +296,10 @@ public class InterviewServiceImpl implements InterviewService {
     public CurrentQuestionResponse getCurrentQuestion(String sessionId) {
         InterviewSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
-            throw new RuntimeException("会话不存在");
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
 
-        if ("COMPLETED".equals(session.getStatus()) || "EVALUATED".equals(session.getStatus())) {
+        if ("COMPLETED".equals(session.getStatus()) || SessionStatus.EVALUATED.getCode().equals(session.getStatus())) {
             CurrentQuestionResponse response = new CurrentQuestionResponse();
             response.setCompleted(true);
             response.setMessage("面试已完成");
@@ -324,7 +310,7 @@ public class InterviewServiceImpl implements InterviewService {
         InterviewQuestionDTO question = getQuestionFromDatabase(sessionId, session.getCurrentQuestionIndex());
         
         if (question == null) {
-            throw new RuntimeException("问题不存在");
+            throw new BusinessException("QUESTION_NOT_FOUND", "问题不存在");
         }
         
         CurrentQuestionResponse response = new CurrentQuestionResponse();
@@ -339,7 +325,7 @@ public class InterviewServiceImpl implements InterviewService {
     public SubmitAnswerResponse submitAnswer(SubmitAnswerRequest request) {
         InterviewSession session = sessionMapper.selectById(request.getSessionId());
         if (session == null) {
-            throw new RuntimeException("会话不存在");
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
 
         // 保存答案到数据库
@@ -352,7 +338,7 @@ public class InterviewServiceImpl implements InterviewService {
         // 检查是否完成
         boolean hasNext = nextIndex < session.getTotalQuestions();
         if (!hasNext) {
-            session.setStatus("COMPLETED");
+            session.setStatus(SessionStatus.COMPLETED.getCode());
             session.setCompletedAt(LocalDateTime.now());
         }
         
@@ -390,15 +376,16 @@ public class InterviewServiceImpl implements InterviewService {
 
         // 如果还未评估或评估失败，触发生成
         String evaluateStatus = session.getEvaluateStatus();
-        if (evaluateStatus == null || 
-            EvaluateStatus.PENDING.getCode().equals(evaluateStatus) || 
+
+        // 先检查是否正在处理中（防止重复触发）
+        if (EvaluateStatus.PROCESSING.getCode().equals(evaluateStatus)) {
+            log.info("⏳ 评估正在处理中，请稍后刷新: {}", sessionId);
+            throw new BusinessException("EVALUATION_IN_PROGRESS", "评估正在处理中，请稍后刷新");
+        }
+
+        if (evaluateStatus == null ||
+            EvaluateStatus.PENDING.getCode().equals(evaluateStatus) ||
             EvaluateStatus.FAILED.getCode().equals(evaluateStatus)) {
-            
-            // 检查是否已经在处理中（防止重复触发）
-            if (EvaluateStatus.PROCESSING.getCode().equals(evaluateStatus)) {
-                log.info("⏳ 评估正在处理中，请稍后刷新: {}", sessionId);
-                throw new BusinessException("EVALUATION_IN_PROGRESS", "评估正在处理中，请稍后刷新");
-            }
             
             // 异步触发评估
             try {
@@ -536,7 +523,7 @@ public class InterviewServiceImpl implements InterviewService {
         try {
             log.info("🤖 开始生成评估报告: {}", session.getSessionId());
             
-            session.setEvaluateStatus("PROCESSING");
+            session.setEvaluateStatus(EvaluateStatus.PROCESSING.getCode());
             sessionMapper.updateById(session);
 
             // 1. 获取所有问题和答案
@@ -552,8 +539,11 @@ public class InterviewServiceImpl implements InterviewService {
                             .orderByAsc(InterviewAnswer::getQuestionIndex)
             );
             
-            if (questions.isEmpty() || answers.isEmpty()) {
-                throw new RuntimeException("没有可评估的答案");
+            if (questions.isEmpty()) {
+                throw new BusinessException("NO_QUESTIONS_FOUND", "没有可评估的问题");
+            }
+            if (answers.isEmpty()) {
+                throw new BusinessException("NO_ANSWERS_FOUND", "没有可评估的答案");
             }
 
             // 2. 构建评估请求
@@ -590,11 +580,12 @@ public class InterviewServiceImpl implements InterviewService {
             log.info("✅ AI 评估完成，响应长度: {}", aiResponse.length());
 
             // 4. 解析评估结果
-            String jsonStr = extractJson(aiResponse);
+            String jsonStr = JsonUtils.extractJson(aiResponse);
             Map<String, Object> result = objectMapper.readValue(jsonStr, new TypeReference<Map<String, Object>>() {});
             
-            // 5. 更新会话
-            session.setOverallScore((Integer) result.getOrDefault("overallScore", 0));
+            // 5. 更新会话（安全类型转换，兼容 AI 返回的 Double 类型）
+            Object scoreObj = result.getOrDefault("overallScore", 0);
+            session.setOverallScore(scoreObj instanceof Number ? ((Number) scoreObj).intValue() : 0);
             session.setOverallFeedback((String) result.get("overallFeedback"));
             
             @SuppressWarnings("unchecked")
@@ -611,10 +602,11 @@ public class InterviewServiceImpl implements InterviewService {
             
             if (questionEvaluations != null) {
                 for (Map<String, Object> eval : questionEvaluations) {
-                    int qIndex = (Integer) eval.get("questionIndex");
-                    double score = ((Number) eval.get("score")).doubleValue();
+                    // 安全类型转换，兼容 AI 返回的多种类型
+                    int qIndex = JsonUtils.safeGetInt(eval.get("questionIndex"));
+                    double score = JsonUtils.safeGetDouble(eval.get("score"));
                     String feedback = (String) eval.get("feedback");
-                    
+
                     // 更新答案表
                     InterviewAnswer answer = answerMapper.selectOne(
                             new LambdaQueryWrapper<InterviewAnswer>()
@@ -631,8 +623,8 @@ public class InterviewServiceImpl implements InterviewService {
                 }
             }
             
-            session.setEvaluateStatus("COMPLETED");
-            session.setStatus("EVALUATED");
+            session.setEvaluateStatus(EvaluateStatus.COMPLETED.getCode());
+            session.setStatus(SessionStatus.EVALUATED.getCode());
             session.setEvaluatedAt(LocalDateTime.now());
             sessionMapper.updateById(session);
             
@@ -640,7 +632,7 @@ public class InterviewServiceImpl implements InterviewService {
 
         } catch (Exception e) {
             log.error("❌ 生成评估报告失败", e);
-            session.setEvaluateStatus("FAILED");
+            session.setEvaluateStatus(EvaluateStatus.FAILED.getCode());
             session.setEvaluateError(e.getMessage());
             sessionMapper.updateById(session);
         }
@@ -704,33 +696,39 @@ public class InterviewServiceImpl implements InterviewService {
         dto.setTotalQuestions(session.getTotalQuestions());
         dto.setCurrentQuestionIndex(session.getCurrentQuestionIndex());
         dto.setStatus(session.getStatus());
-        
-        // 从数据库加载问题列表
+
+        // 批量查询所有问题和答案，避免 N+1
         List<InterviewQuestion> questions = questionMapper.selectList(
                 new LambdaQueryWrapper<InterviewQuestion>()
                         .eq(InterviewQuestion::getSessionId, session.getSessionId())
                         .orderByAsc(InterviewQuestion::getQuestionIndex)
         );
-        
+
+        List<InterviewAnswer> answers = answerMapper.selectList(
+                new LambdaQueryWrapper<InterviewAnswer>()
+                        .eq(InterviewAnswer::getSessionId, session.getSessionId())
+        );
+        Map<Integer, InterviewAnswer> answerMap = answers.stream()
+                .collect(Collectors.toMap(InterviewAnswer::getQuestionIndex, a -> a));
+
         List<InterviewSessionDTO.InterviewQuestionDTO> questionDTOs = questions.stream()
                 .map(q -> {
-                    InterviewQuestionDTO externalDto = getQuestionFromDatabase(session.getSessionId(), q.getQuestionIndex());
-                    if (externalDto == null) return null;
-                    
-                    // 转换为内部类
                     InterviewSessionDTO.InterviewQuestionDTO internalDto = new InterviewSessionDTO.InterviewQuestionDTO();
-                    internalDto.setQuestionIndex(externalDto.getQuestionIndex());
-                    internalDto.setQuestion(externalDto.getQuestion());
-                    internalDto.setType(externalDto.getType());
-                    internalDto.setCategory(externalDto.getCategory());
-                    internalDto.setUserAnswer(externalDto.getUserAnswer());
-                    internalDto.setScore(externalDto.getScore());
-                    internalDto.setFeedback(externalDto.getFeedback());
+                    internalDto.setQuestionIndex(q.getQuestionIndex());
+                    internalDto.setQuestion(q.getQuestion());
+                    internalDto.setType(q.getType());
+                    internalDto.setCategory(q.getCategory());
+
+                    InterviewAnswer answer = answerMap.get(q.getQuestionIndex());
+                    if (answer != null) {
+                        internalDto.setUserAnswer(answer.getAnswer());
+                        internalDto.setScore(answer.getScore() != null ? answer.getScore().doubleValue() : null);
+                        internalDto.setFeedback(answer.getFeedback());
+                    }
                     return internalDto;
                 })
-                .filter(Objects::nonNull)
                 .collect(Collectors.toList());
-        
+
         dto.setQuestions(questionDTOs);
         return dto;
     }

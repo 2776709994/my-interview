@@ -9,8 +9,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
-import java.math.BigInteger;
-import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -42,7 +40,8 @@ public class MinioFileStorageService implements FileStorageService {
                 minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucketName).build());
             }
         } catch (Exception e) {
-            throw new RuntimeException("MinIO bucket init failed", e);
+            log.error("MinIO 存储桶初始化失败: {}", bucketName, e);
+            throw new IllegalStateException("MinIO 存储桶初始化失败", e);
         }
     }
 
@@ -75,48 +74,20 @@ public class MinioFileStorageService implements FileStorageService {
         
         log.info("MinIO 存储路径: {}", objectName);
         
-        // 先读取完整文件到 byte[]，确保数据完整性
-        byte[] fileBytes = file.getBytes();
-        String originalMd5 = calculateMD5(fileBytes);
-        log.info("文件大小: {} bytes, MD5: {}", fileBytes.length, originalMd5);
-        
-        // 使用 ByteArrayInputStream 上传
-        try (java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(fileBytes)) {
+        // 使用 MultipartFile 的 InputStream 直接上传，避免整文件加载到内存
+        try (InputStream inputStream = file.getInputStream()) {
             minioClient.putObject(
                     PutObjectArgs.builder()
                             .bucket(bucketName)
                             .object(objectName)
-                            .stream(bais, fileBytes.length, -1)
+                            .stream(inputStream, file.getSize(), -1)
                             .contentType(file.getContentType())
                             .build()
             );
         }
-        
-        // 下载刚上传的文件，验证 MD5
-        byte[] downloadedBytes = minioClient.getObject(
-                GetObjectArgs.builder()
-                        .bucket(bucketName)
-                        .object(objectName)
-                        .build()
-        ).readAllBytes();
-        
-        String uploadedMd5 = calculateMD5(downloadedBytes);
-        log.info("✅ 文件上传成功: {}, MinIO 中大小: {} bytes, MD5: {}", objectName, downloadedBytes.length, uploadedMd5);
-        
-        if (!originalMd5.equals(uploadedMd5)) {
-            log.error("❌ MD5 不匹配！原始: {}, MinIO: {}", originalMd5, uploadedMd5);
-            throw new RuntimeException("文件上传后内容被篡改");
-        }
-        
-        log.info("✅ MD5 验证通过，文件完整性确认");
+
+        log.info("✅ 文件上传成功: {}, 大小: {} bytes", objectName, file.getSize());
         return objectName;
-    }
-    
-    private String calculateMD5(byte[] bytes) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        byte[] digest = md.digest(bytes);
-        BigInteger bigInt = new BigInteger(1, digest);
-        return String.format("%032x", bigInt);
     }
 
     @Override

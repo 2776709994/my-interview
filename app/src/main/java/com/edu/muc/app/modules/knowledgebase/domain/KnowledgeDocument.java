@@ -9,7 +9,8 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 知识文档实体�? * @TableName knowledge_documents
+ * 知识文档实体类
+ * @TableName knowledge_documents
  */
 @Data
 @TableName(value = "knowledge_documents")
@@ -21,7 +22,8 @@ public class KnowledgeDocument {
     private Long id;
 
     /**
-     * 文档名称（对齐前�?name 字段�?     */
+     * 文档名称（对齐前端 name 字段）
+     */
     private String name;
 
     /**
@@ -30,7 +32,8 @@ public class KnowledgeDocument {
     private String category;
 
     /**
-     * 原始文件�?     */
+     * 原始文件名
+     */
     private String fileName;
 
     /**
@@ -39,7 +42,7 @@ public class KnowledgeDocument {
     private String content;
 
     /**
-     * 向量表示�?536 维）
+     * 向量表示（1536 维）
      */
     @TableField("content_embedding")
     private String contentEmbedding;
@@ -70,7 +73,8 @@ public class KnowledgeDocument {
     private String vectorStatus;
 
     /**
-     * 向量化错误信�?     */
+     * 向量化错误信息
+     */
     private String vectorError;
 
     /**
@@ -99,7 +103,8 @@ public class KnowledgeDocument {
     private LocalDateTime processedAt;
 
     /**
-     * 最后访问时�?     */
+     * 最后访问时间
+     */
     private LocalDateTime lastAccessedAt;
 
     /**

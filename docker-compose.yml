@@ -66,8 +66,8 @@ services:
   # 教程知识点：
   #   - MinIO 兼容 AWS S3 协议，这意味着代码中使用 S3 SDK 即可无缝切换到云厂商的对象存储。
   #   - 端口说明：
-  #     - 9000: API 端口，代码通过此端口上传/下载文件
-  #     - 9001: 控制台端口，浏览器访问此端口管理文件
+  #     - 9002: API 端口（映射到容器内 9000），避免与 interview-guide 的 9000 冲突
+  #     - 9003: 控制台端口（映射到容器内 9001），避免与 interview-guide 的 9001 冲突
   # =========================================
   minio:
     image: minio/minio
@@ -78,8 +78,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
     volumes:
       - minio_data:/data
     healthcheck:

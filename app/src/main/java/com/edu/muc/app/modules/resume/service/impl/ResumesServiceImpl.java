@@ -2,6 +2,7 @@ package com.edu.muc.app.modules.resume.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
 import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
 import com.edu.muc.app.modules.resume.domain.Resumes;
@@ -70,9 +71,6 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
             // 3. 全新文件：存 MinIO → 插入数据库 → 发送分析任务
             storageKey = fileStorageService.store(file);
             String storageUrl = fileStorageService.getFileUrl(storageKey);
-
-            log.info("🔍 [URL长度检查] storageKey: {}", storageKey);
-            log.info("🔍 [URL长度检查] storageUrl: {} (长度: {})", storageUrl, storageUrl.length());
 
             Resumes resume = new Resumes();
             resume.setOriginalFilename(file.getOriginalFilename());
@@ -260,7 +258,7 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
         // 1. 查简历信息
         Resumes resume = resumesMapper.selectById(id);
         if (resume == null) {
-            throw new RuntimeException("简历不存在");
+            throw new BusinessException("RESUME_NOT_FOUND", "简历不存在");
         }
 
         // 2. 查所有分析结果（按时间倒序）

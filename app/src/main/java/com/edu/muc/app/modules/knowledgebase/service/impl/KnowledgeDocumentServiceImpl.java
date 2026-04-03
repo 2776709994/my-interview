@@ -2,6 +2,8 @@ package com.edu.muc.app.modules.knowledgebase.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.edu.muc.app.common.JsonUtils;
+import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
 import com.edu.muc.app.modules.knowledgebase.dto.KnowledgeDocumentDTO;
@@ -113,7 +115,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 
                 // 生成该 chunk 的向量
                 float[] embedding = embeddingModel.embed(chunk);
-                String embeddingJson = convertEmbeddingToJson(embedding);
+                String embeddingJson = JsonUtils.convertEmbeddingToJson(embedding);
                 
                 // 创建子文档
                 KnowledgeDocument chunkDoc = new KnowledgeDocument();
@@ -294,7 +296,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             try {
                 // 1. 将问题向量化
                 float[] qEmbedding = embeddingModel.embed(question);
-                String qJson = convertEmbeddingToJson(qEmbedding);
+                String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
                 
                 // 2. 智能检索相关文档片段（带相似度过滤）
                 List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson);
@@ -371,21 +373,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             return fileName;
         }
         return fileName.substring(0, fileName.lastIndexOf("."));
-    }
-
-    /**
-     * 将向量数组转换为 JSON 字符串
-     */
-    private String convertEmbeddingToJson(float[] embedding) {
-        StringBuilder sb = new StringBuilder("[");
-        for (int i = 0; i < embedding.length; i++) {
-            sb.append(embedding[i]);
-            if (i < embedding.length - 1) {
-                sb.append(",");
-            }
-        }
-        sb.append("]");
-        return sb.toString();
     }
 
     /**
@@ -504,12 +491,12 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     public void revectorize(Long id) {
         KnowledgeDocument document = documentMapper.selectById(id);
         if (document == null) {
-            throw new RuntimeException("文档不存在");
+            throw new BusinessException("DOCUMENT_NOT_FOUND", "文档不存在");
         }
         
         // 只有父文档才能重新向量化
         if (document.getParentId() != null) {
-            throw new RuntimeException("只能对父文档进行重新向量化");
+            throw new BusinessException("INVALID_OPERATION", "只能对父文档进行重新向量化");
         }
         
         log.info("🔄 开始重新向量化文档: {}", id);
@@ -531,7 +518,11 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             try {
                 String content = document.getContent();
                 if (content == null || content.isEmpty()) {
-                    throw new RuntimeException("文档内容为空");
+                    log.error("文档内容为空，无法重新向量化，id: {}", id);
+                    document.setVectorStatus("FAILED");
+                    document.setVectorError("文档内容为空");
+                    documentMapper.updateById(document);
+                    return;
                 }
                 
                 // 重新分块
@@ -544,7 +535,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                     
                     // 生成该 chunk 的向量
                     float[] embedding = embeddingModel.embed(chunk);
-                    String embeddingJson = convertEmbeddingToJson(embedding);
+                    String embeddingJson = JsonUtils.convertEmbeddingToJson(embedding);
                     
                     // 创建子文档
                     KnowledgeDocument chunkDoc = new KnowledgeDocument();

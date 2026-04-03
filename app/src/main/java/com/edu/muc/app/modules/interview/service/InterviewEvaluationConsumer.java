@@ -1,9 +1,12 @@
 package com.edu.muc.app.modules.interview.service;
 
+import com.edu.muc.app.common.JsonUtils;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.modules.interview.domain.InterviewAnswer;
 import com.edu.muc.app.modules.interview.domain.InterviewQuestion;
 import com.edu.muc.app.modules.interview.domain.InterviewSession;
+import com.edu.muc.app.modules.interview.enums.EvaluateStatus;
+import com.edu.muc.app.modules.interview.enums.SessionStatus;
 import com.edu.muc.app.modules.interview.mapper.InterviewAnswerMapper;
 import com.edu.muc.app.modules.interview.mapper.InterviewQuestionMapper;
 import com.edu.muc.app.modules.interview.mapper.InterviewSessionMapper;
@@ -41,7 +44,9 @@ public class InterviewEvaluationConsumer {
     
     private static final String STREAM_KEY = "interview:evaluation";
     private static final String GROUP = "interview-evaluation-group";
-    private static final String CONSUMER = "consumer-1";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private Thread listenerThread;
 
     public InterviewEvaluationConsumer(RedisTemplate<String, Object> redisTemplate,
                                       InterviewSessionMapper sessionMapper,
@@ -66,16 +71,19 @@ public class InterviewEvaluationConsumer {
         try {
             redisTemplate.opsForStream().createGroup(STREAM_KEY, GROUP);
         } catch (Exception e) {
-            // 组已存在会抛异常，忽略即可
+            if (e.getMessage() == null || !e.getMessage().contains("BUSYGROUP")) {
+                log.warn("创建消费者组异常（可能已存在）: {}", e.getMessage());
+            }
         }
 
         // 2. 启动独立线程持续监听
-        Thread listenerThread = new Thread(() -> {
+        String consumerName = "interview-eval-consumer-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        listenerThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     List<MapRecord<String, Object, Object>> messages = redisTemplate.opsForStream()
                             .read(
-                                    Consumer.from(GROUP, CONSUMER),
+                                    Consumer.from(GROUP, consumerName),
                                     StreamReadOptions.empty().block(Duration.ofSeconds(2)),
                                     StreamOffset.create(STREAM_KEY, ReadOffset.lastConsumed())
                             );
@@ -130,7 +138,14 @@ public class InterviewEvaluationConsumer {
     @PreDestroy
     public void shutdown() {
         log.info("🛑 开始关闭面试评估消费者...");
-        
+
+        // 1. 中断监听线程
+        if (listenerThread != null && listenerThread.isAlive()) {
+            listenerThread.interrupt();
+            log.info("✅ 监听线程已中断");
+        }
+
+        // 2. 关闭线程池
         executor.shutdown();
         try {
             if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
@@ -162,7 +177,7 @@ public class InterviewEvaluationConsumer {
 
         try {
             // 更新状态为 PROCESSING
-            session.setEvaluateStatus("PROCESSING");
+            session.setEvaluateStatus(EvaluateStatus.PROCESSING.getCode());
             sessionMapper.updateById(session);
             log.info("🔄 评估状态已更新为 PROCESSING");
 
@@ -228,30 +243,30 @@ public class InterviewEvaluationConsumer {
             log.info("✅ AI 评估完成，响应长度: {}", aiResponse.length());
 
             // 4. 解析评估结果
-            ObjectMapper objectMapper = new ObjectMapper();
-            String jsonStr = extractJson(aiResponse);
-            Map<String, Object> result = objectMapper.readValue(jsonStr, new TypeReference<Map<String, Object>>() {});
-            
-            // 5. 更新会话
-            session.setOverallScore((Integer) result.getOrDefault("overallScore", 0));
+            String jsonStr = JsonUtils.extractJson(aiResponse);
+            Map<String, Object> result = MAPPER.readValue(jsonStr, new TypeReference<Map<String, Object>>() {});
+
+            // 5. 更新会话（安全类型转换）
+            Object scoreObj = result.getOrDefault("overallScore", 0);
+            session.setOverallScore(scoreObj instanceof Number ? ((Number) scoreObj).intValue() : 0);
             session.setOverallFeedback((String) result.get("overallFeedback"));
             
             @SuppressWarnings("unchecked")
             List<String> strengths = (List<String>) result.get("strengths");
-            session.setStrengthsJson(objectMapper.writeValueAsString(strengths != null ? strengths : List.of()));
-            
+            session.setStrengthsJson(MAPPER.writeValueAsString(strengths != null ? strengths : List.of()));
+
             @SuppressWarnings("unchecked")
             List<String> improvements = (List<String>) result.get("improvements");
-            session.setImprovementsJson(objectMapper.writeValueAsString(improvements != null ? improvements : List.of()));
-            
+            session.setImprovementsJson(MAPPER.writeValueAsString(improvements != null ? improvements : List.of()));
+
             // 6. 更新每个问题的评分
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> questionEvaluations = (List<Map<String, Object>>) result.get("questionEvaluations");
-            
+
             if (questionEvaluations != null) {
                 for (Map<String, Object> eval : questionEvaluations) {
-                    int qIndex = (Integer) eval.get("questionIndex");
-                    double score = ((Number) eval.get("score")).doubleValue();
+                    int qIndex = JsonUtils.safeGetInt(eval.get("questionIndex"));
+                    double score = JsonUtils.safeGetDouble(eval.get("score"));
                     String feedback = (String) eval.get("feedback");
                     
                     // 更新答案表
@@ -270,8 +285,8 @@ public class InterviewEvaluationConsumer {
                 }
             }
             
-            session.setEvaluateStatus("COMPLETED");
-            session.setStatus("EVALUATED");
+            session.setEvaluateStatus(EvaluateStatus.COMPLETED.getCode());
+            session.setStatus(SessionStatus.EVALUATED.getCode());
             session.setEvaluatedAt(LocalDateTime.now());
             sessionMapper.updateById(session);
             
@@ -279,33 +294,10 @@ public class InterviewEvaluationConsumer {
 
         } catch (Exception e) {
             log.error("❌ 生成评估报告失败, sessionId: {}", sessionId, e);
-            session.setEvaluateStatus("FAILED");
+            session.setEvaluateStatus(EvaluateStatus.FAILED.getCode());
             session.setEvaluateError(e.getMessage());
             sessionMapper.updateById(session);
         }
-    }
-
-    /**
-     * 从 AI 响应中提取 JSON
-     */
-    private String extractJson(String response) {
-        if (response == null) return "{}";
-        
-        // 去除 Markdown 代码块标记
-        String cleaned = response.trim();
-        if (cleaned.startsWith("```")) {
-            cleaned = cleaned.replaceAll("```json\\s*", "").replaceAll("```", "").trim();
-        }
-        
-        // 尝试找到第一个 { 和最后一个 }
-        int start = cleaned.indexOf('{');
-        int end = cleaned.lastIndexOf('}');
-        
-        if (start >= 0 && end > start) {
-            return cleaned.substring(start, end + 1);
-        }
-        
-        return cleaned;
     }
 
     /**
@@ -313,15 +305,13 @@ public class InterviewEvaluationConsumer {
      */
     private void generateEmptyEvaluation(InterviewSession session, List<InterviewQuestion> questions) {
         try {
-            ObjectMapper objectMapper = new ObjectMapper();
-            
             // 设置零分
             session.setOverallScore(0);
             session.setOverallFeedback("候选人未回答任何问题，无法进行有效评估。建议认真准备面试，积极回答问题以展示自己的能力。");
-            
+
             // 设置优点为空
-            session.setStrengthsJson(objectMapper.writeValueAsString(List.of()));
-            
+            session.setStrengthsJson(MAPPER.writeValueAsString(List.of()));
+
             // 设置改进建议
             List<String> improvements = List.of(
                 "面试中应积极回答问题，即使不确定也要尝试表达自己的思路",
@@ -329,7 +319,7 @@ public class InterviewEvaluationConsumer {
                 "遇到不会的问题可以请求提示或换个角度思考",
                 "保持冷静，不要因为紧张而放弃回答"
             );
-            session.setImprovementsJson(objectMapper.writeValueAsString(improvements));
+            session.setImprovementsJson(MAPPER.writeValueAsString(improvements));
             
             // 为所有问题创建零分答案记录
             for (InterviewQuestion question : questions) {
@@ -345,8 +335,8 @@ public class InterviewEvaluationConsumer {
             }
             
             // 更新会话状态
-            session.setEvaluateStatus("COMPLETED");
-            session.setStatus("EVALUATED");
+            session.setEvaluateStatus(EvaluateStatus.COMPLETED.getCode());
+            session.setStatus(SessionStatus.EVALUATED.getCode());
             session.setEvaluatedAt(LocalDateTime.now());
             sessionMapper.updateById(session);
             

@@ -44,13 +44,8 @@ public class InterviewController {
      */
     @GetMapping("/sessions")
     public Result<List<TextSessionMetaDTO>> listSessions() {
-        try {
-            List<TextSessionMetaDTO> sessions = interviewService.listSessions();
-            return Result.success(sessions);
-        } catch (Exception e) {
-            log.error("❌ 获取会话列表失败", e);
-            return Result.error(500, "获取会话列表失败: " + e.getMessage());
-        }
+        List<TextSessionMetaDTO> sessions = interviewService.listSessions();
+        return Result.success(sessions);
     }
 
     /**
@@ -58,16 +53,11 @@ public class InterviewController {
      */
     @PostMapping("/sessions")
     public Result<InterviewSessionDTO> createSession(@RequestBody CreateInterviewRequest request) {
-        try {
-            log.info("🎯 创建面试会话请求: skillId={}, questionCount={}", 
-                    request.getSkillId(), request.getQuestionCount());
-            
-            InterviewSessionDTO session = interviewService.createSession(request);
-            return Result.success(session);
-        } catch (Exception e) {
-            log.error("❌ 创建会话失败", e);
-            return Result.error(500, "创建会话失败: " + e.getMessage());
-        }
+        log.info("🎯 创建面试会话请求: skillId={}, questionCount={}",
+                request.getSkillId(), request.getQuestionCount());
+
+        InterviewSessionDTO session = interviewService.createSession(request);
+        return Result.success(session);
     }
 
     /**
@@ -75,13 +65,8 @@ public class InterviewController {
      */
     @GetMapping("/sessions/{sessionId}")
     public Result<InterviewSessionDTO> getSession(@PathVariable String sessionId) {
-        try {
-            InterviewSessionDTO session = interviewService.getSession(sessionId);
-            return Result.success(session);
-        } catch (Exception e) {
-            log.error(" 获取会话失败: {}", sessionId, e);
-            return Result.error(500, "获取会话失败: " + e.getMessage());
-        }
+        InterviewSessionDTO session = interviewService.getSession(sessionId);
+        return Result.success(session);
     }
 
     /**
@@ -90,14 +75,9 @@ public class InterviewController {
      */
     @GetMapping("/sessions/{sessionId}/details")
     public Result<InterviewReportDTO> getSessionDetails(@PathVariable String sessionId) {
-        try {
-            // 直接调用 getReport，返回完整的评估数据
-            InterviewReportDTO report = interviewService.getReport(sessionId);
-            return Result.success(report);
-        } catch (Exception e) {
-            log.error("❌ 获取会话详情失败: {}", sessionId, e);
-            return Result.error(500, "获取详情失败: " + e.getMessage());
-        }
+        // 直接调用 getReport，返回完整的评估数据
+        InterviewReportDTO report = interviewService.getReport(sessionId);
+        return Result.success(report);
     }
 
     /**
@@ -105,16 +85,11 @@ public class InterviewController {
      */
     @GetMapping("/sessions/unfinished/{resumeId}")
     public Result<InterviewSessionDTO> findUnfinishedSession(@PathVariable Long resumeId) {
-        try {
-            InterviewSessionDTO session = interviewService.findUnfinishedSession(resumeId);
-            if (session != null) {
-                return Result.success(session);
-            } else {
-                return Result.error(404, "没有未完成的会话");
-            }
-        } catch (Exception e) {
-            log.error("❌ 查找未完成会话失败: {}", resumeId, e);
-            return Result.error(500, "查找失败: " + e.getMessage());
+        InterviewSessionDTO session = interviewService.findUnfinishedSession(resumeId);
+        if (session != null) {
+            return Result.success(session);
+        } else {
+            return Result.error(404, "没有未完成的会话");
         }
     }
 
@@ -123,13 +98,8 @@ public class InterviewController {
      */
     @GetMapping("/sessions/{sessionId}/question")
     public Result<CurrentQuestionResponse> getCurrentQuestion(@PathVariable String sessionId) {
-        try {
-            CurrentQuestionResponse response = interviewService.getCurrentQuestion(sessionId);
-            return Result.success(response);
-        } catch (Exception e) {
-            log.error("❌ 获取当前问题失败: {}", sessionId, e);
-            return Result.error(500, "获取问题失败: " + e.getMessage());
-        }
+        CurrentQuestionResponse response = interviewService.getCurrentQuestion(sessionId);
+        return Result.success(response);
     }
 
     /**
@@ -139,14 +109,9 @@ public class InterviewController {
     public Result<SubmitAnswerResponse> submitAnswer(
             @PathVariable String sessionId,
             @RequestBody SubmitAnswerRequest request) {
-        try {
-            request.setSessionId(sessionId);
-            SubmitAnswerResponse response = interviewService.submitAnswer(request);
-            return Result.success(response);
-        } catch (Exception e) {
-            log.error("❌ 提交答案失败: {}", sessionId, e);
-            return Result.error(500, "提交答案失败: " + e.getMessage());
-        }
+        request.setSessionId(sessionId);
+        SubmitAnswerResponse response = interviewService.submitAnswer(request);
+        return Result.success(response);
     }
 
     /**
@@ -156,14 +121,9 @@ public class InterviewController {
     public Result<Void> saveAnswer(
             @PathVariable String sessionId,
             @RequestBody SubmitAnswerRequest request) {
-        try {
-            request.setSessionId(sessionId);
-            interviewService.saveAnswer(request);
-            return Result.success();
-        } catch (Exception e) {
-            log.error("❌ 暂存答案失败: {}", sessionId, e);
-            return Result.error(500, "暂存答案失败: " + e.getMessage());
-        }
+        request.setSessionId(sessionId);
+        interviewService.saveAnswer(request);
+        return Result.success();
     }
 
     /**
@@ -171,13 +131,8 @@ public class InterviewController {
      */
     @PostMapping("/sessions/{sessionId}/complete")
     public Result<Void> completeInterview(@PathVariable String sessionId) {
-        try {
-            interviewService.completeInterview(sessionId);
-            return Result.success();
-        } catch (Exception e) {
-            log.error("❌ 提前交卷失败: {}", sessionId, e);
-            return Result.error(500, "交卷失败: " + e.getMessage());
-        }
+        interviewService.completeInterview(sessionId);
+        return Result.success();
     }
 
     /**
@@ -185,30 +140,8 @@ public class InterviewController {
      */
     @GetMapping("/sessions/{sessionId}/report")
     public Result<InterviewReportDTO> getReport(@PathVariable String sessionId) {
-        try {
-            InterviewReportDTO report = interviewService.getReport(sessionId);
-            return Result.success(report);
-        } catch (Exception e) {
-            log.error(" 获取报告失败: {}", sessionId, e);
-            return Result.error(500, "获取报告失败: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 导出面试报告（PDF）
-     */
-    @GetMapping("/sessions/{sessionId}/export")
-    public void exportReport(@PathVariable String sessionId, 
-                            jakarta.servlet.http.HttpServletResponse response) {
-        try {
-            // TODO: 实现 PDF 导出逻辑
-            response.setContentType("application/pdf");
-            response.setHeader("Content-Disposition", 
-                    "attachment; filename=interview-report-" + sessionId + ".pdf");
-            log.info(" 导出面试报告: {}", sessionId);
-        } catch (Exception e) {
-            log.error("❌ 导出报告失败: {}", sessionId, e);
-        }
+        InterviewReportDTO report = interviewService.getReport(sessionId);
+        return Result.success(report);
     }
 
     /**
@@ -216,16 +149,11 @@ public class InterviewController {
      */
     @DeleteMapping("/sessions/{sessionId}")
     public Result<String> deleteSession(@PathVariable String sessionId) {
-        try {
-            boolean success = interviewService.deleteSession(sessionId);
-            if (success) {
-                return Result.success("面试会话删除成功");
-            } else {
-                return Result.error(404, "面试会话不存在");
-            }
-        } catch (Exception e) {
-            log.error("❌ 删除会话失败: {}", sessionId, e);
-            return Result.error(500, "删除会话失败: " + e.getMessage());
+        boolean success = interviewService.deleteSession(sessionId);
+        if (success) {
+            return Result.success("面试会话删除成功");
+        } else {
+            return Result.error(404, "面试会话不存在");
         }
     }
 }

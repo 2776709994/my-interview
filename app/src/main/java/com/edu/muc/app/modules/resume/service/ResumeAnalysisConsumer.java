@@ -38,7 +38,9 @@ public class ResumeAnalysisConsumer {
     
     private static final String STREAM_KEY = "resume:analysis";
     private static final String GROUP = "resume-analysis-group";
-    private static final String CONSUMER = "consumer-1";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    private Thread listenerThread;
 
 
     public ResumeAnalysisConsumer(RedisTemplate<String, Object> redisTemplate,
@@ -64,17 +66,21 @@ public class ResumeAnalysisConsumer {
         try {
             redisTemplate.opsForStream().createGroup(STREAM_KEY, GROUP);
         } catch (Exception e) {
-            // 组已存在会抛异常，忽略即可
+            // 组已存在(BUSYGROUP)则忽略，其他异常记录日志
+            if (e.getMessage() == null || !e.getMessage().contains("BUSYGROUP")) {
+                log.warn("创建消费者组异常（可能已存在）: {}", e.getMessage());
+            }
         }
 
         // 2. 启动独立线程持续监听
         log.info("✅ 启动独立线程持续监听 resume:analysis");
-        Thread listenerThread = new Thread(() -> {
+        String consumerName = "resume-consumer-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        listenerThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     List<MapRecord<String, Object, Object>> messages = redisTemplate.opsForStream()
                             .read(
-                                    Consumer.from(GROUP, CONSUMER),
+                                    Consumer.from(GROUP, consumerName),
                                     StreamReadOptions.empty().block(Duration.ofSeconds(2)),
                                     StreamOffset.create(STREAM_KEY, ReadOffset.lastConsumed())
                             );
@@ -123,13 +129,19 @@ public class ResumeAnalysisConsumer {
     }
 
     /**
-     * 应用关闭时关闭线程池
+     * 应用关闭时关闭线程池和监听线程
      */
     @PreDestroy
     public void shutdown() {
         log.info(" 开始关闭 Redis Stream 消费者...");
-        
-        // 1. 关闭主线程池
+
+        // 1. 中断监听线程
+        if (listenerThread != null && listenerThread.isAlive()) {
+            listenerThread.interrupt();
+            log.info("✅ 监听线程已中断");
+        }
+
+        // 2. 关闭主线程池
         log.info(" 等待分析任务完成（最多60秒）...");
         executor.shutdown();
         try {
@@ -217,7 +229,6 @@ public class ResumeAnalysisConsumer {
                     log.info("💾 简历文本已保存到数据库");
                 } catch (java.util.concurrent.TimeoutException e) {
                     log.error("❌ 文件解析超时（30秒），可能是文件过大或格式复杂");
-                    Thread.currentThread().interrupt();
                     text = "简历文本提取失败：解析超时";
                     resume.setAnalyzeStatus("FAILED");
                     resume.setAnalyzeError("文本提取失败：解析超时（超过30秒）");
@@ -307,18 +318,17 @@ public class ResumeAnalysisConsumer {
             }
 
             log.info("🔍 解析 JSON...");
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode root = mapper.readTree(jsonStr);
+            JsonNode root = MAPPER.readTree(jsonStr);
 
             // 2. 提取顶层字段
             log.info("📊 提取评分数据...");
             int overallScore = root.has("overallScore") ? root.get("overallScore").asInt() : 0;
             String summary = root.has("summary") ? root.get("summary").asText("") : "";
-            JsonNode strengthsNode = root.has("strengths") ? root.get("strengths") : mapper.createArrayNode();
-            JsonNode suggestionsNode = root.has("suggestions") ? root.get("suggestions") : mapper.createArrayNode();
+            JsonNode strengthsNode = root.has("strengths") ? root.get("strengths") : MAPPER.createArrayNode();
+            JsonNode suggestionsNode = root.has("suggestions") ? root.get("suggestions") : MAPPER.createArrayNode();
 
             // 3. 提取 scoreDetail
-            JsonNode scoreDetail = root.has("scoreDetail") ? root.get("scoreDetail") : mapper.createObjectNode();
+            JsonNode scoreDetail = root.has("scoreDetail") ? root.get("scoreDetail") : MAPPER.createObjectNode();
             int projectScore = scoreDetail.has("projectScore") ? scoreDetail.get("projectScore").asInt() : 0;
             int skillMatchScore = scoreDetail.has("skillMatchScore") ? scoreDetail.get("skillMatchScore").asInt() : 0;
             int contentScore = scoreDetail.has("contentScore") ? scoreDetail.get("contentScore").asInt() : 0;
