@@ -4,7 +4,7 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.edu.muc.app.modules.resume.mapper.ResumeAnalysesMapper">
 
-    <resultMap id="BaseResultMap" type="generator.domain.ResumeAnalyses">
+    <resultMap id="BaseResultMap" type="com.edu.muc.app.modules.resume.domain.ResumeAnalyses">
             <id property="id" column="id" />
             <result property="analyzedAt" column="analyzed_at" />
             <result property="contentScore" column="content_score" />

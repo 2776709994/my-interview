@@ -82,7 +82,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             log.info("✅ 文件解析成功，内容长度: {}", content.length());
 
             // 4. 文本分块
-            List<String> chunks = splitTextIntoChunks(content, 1500); // 每块约 1500 字符
+            List<String> chunks = splitTextIntoChunks(content, 600); // 每块约 1500 字符
             log.info("✅ 文本已分块，共 {} 块", chunks.size());
 
             // 5. 创建父文档记录（存储完整内容和元数据）
