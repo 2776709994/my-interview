@@ -24,11 +24,11 @@ export interface ResumeStats {
 }
 
 export interface PaginatedResumeList {
-  list: ResumeListItem[];
+  records: ResumeListItem[];
   total: number;
-  page: number;
+  current: number;
   size: number;
-  totalPages: number;
+  pages: number;
 }
 
 export interface AnalysisItem {

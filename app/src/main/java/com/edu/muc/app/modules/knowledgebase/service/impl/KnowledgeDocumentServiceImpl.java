@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -82,7 +83,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             log.info("✅ 文件解析成功，内容长度: {}", content.length());
 
             // 4. 文本分块
-            List<String> chunks = splitTextIntoChunks(content, 600); // 每块约 1500 字符
+            List<String> chunks = splitTextIntoChunks(content, 600); // 每块约 600 字符
             log.info("✅ 文本已分块，共 {} 块", chunks.size());
 
             // 5. 创建父文档记录（存储完整内容和元数据）
@@ -162,22 +163,27 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     @Override
     public List<KnowledgeDocumentDTO> getList(String sortBy, String vectorStatus) {
         LambdaQueryWrapper<KnowledgeDocument> wrapper = new LambdaQueryWrapper<>();
-        
+
         // 只查询父文档（parentId 为 null 的记录）
-        wrapper.isNull(KnowledgeDocument::getParentId);
-        
+        // 用 .apply 避免 MyBatis-Plus 对 null 字段调用 hashCode() 触发 NPE
+        wrapper.apply("parent_id IS NULL");
+
         // 按状态筛选
         if (vectorStatus != null && !vectorStatus.isEmpty()) {
             wrapper.eq(KnowledgeDocument::getVectorStatus, vectorStatus);
         }
-        
-        // 排序
-        switch (sortBy) {
-            case "time" -> wrapper.orderByDesc(KnowledgeDocument::getUploadedAt);
-            case "size" -> wrapper.orderByDesc(KnowledgeDocument::getFileSize);
-            case "access" -> wrapper.orderByDesc(KnowledgeDocument::getAccessCount);
-            case "question" -> wrapper.orderByDesc(KnowledgeDocument::getQuestionCount);
-            default -> wrapper.orderByDesc(KnowledgeDocument::getUploadedAt);
+
+        // 排序（sortBy 可能为 null）
+        if (sortBy != null && !sortBy.isEmpty()) {
+            switch (sortBy) {
+                case "time" -> wrapper.orderByDesc(KnowledgeDocument::getUploadedAt);
+                case "size" -> wrapper.orderByDesc(KnowledgeDocument::getFileSize);
+                case "access" -> wrapper.orderByDesc(KnowledgeDocument::getAccessCount);
+                case "question" -> wrapper.orderByDesc(KnowledgeDocument::getQuestionCount);
+                default -> wrapper.orderByDesc(KnowledgeDocument::getUploadedAt);
+            }
+        } else {
+            wrapper.orderByDesc(KnowledgeDocument::getUploadedAt);
         }
 
         List<KnowledgeDocument> documents = documentMapper.selectList(wrapper);
@@ -317,16 +323,21 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 String userPrompt = String.format("问题：%s\n\n上下文：\n%s", question, context);
 
                 // 5. 流式调用 AI
+                final AtomicReference<org.reactivestreams.Subscription> subRef = new AtomicReference<>();
                 chatClient.prompt()
                         .system(sysPrompt)
                         .user(userPrompt)
                         .stream()
                         .content()
                         .doOnNext(chunk -> {
-                            try { 
-                                emitter.send(chunk); 
-                            } catch (IOException e) { 
-                                throw new RuntimeException(e); 
+                            try {
+                                emitter.send(chunk);
+                            } catch (IOException e) {
+                                log.error("❌ SSE 发送失败，关闭连接", e);
+                                emitter.completeWithError(e);
+                                org.reactivestreams.Subscription sub = subRef.get();
+                                if (sub != null) sub.cancel();
+                                throw new RuntimeException(e);
                             }
                         })
                         .doOnComplete(() -> {
@@ -338,7 +349,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                                         .filter(id -> id != null)
                                         .distinct()
                                         .toList();
-                                
+
                                 if (!parentIds.isEmpty()) {
                                     documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
                                             .setSql("question_count = question_count + 1")
@@ -432,7 +443,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             }
             
             // 下一块的起始位置（减去重叠部分）
-            // 例如：当前块结束于 1500，重叠 200，则下一块从 1300 开始
             int nextStart = end - overlapSize;
             
             // 确保 start 在前进（防止死循环）
@@ -526,7 +536,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 }
                 
                 // 重新分块
-                List<String> chunks = splitTextIntoChunks(content, 1500);
+                List<String> chunks = splitTextIntoChunks(content, 600);
                 log.info("✅ 文本已重新分块，共 {} 块", chunks.size());
                 
                 // 为每个 chunk 创建子文档并生成向量

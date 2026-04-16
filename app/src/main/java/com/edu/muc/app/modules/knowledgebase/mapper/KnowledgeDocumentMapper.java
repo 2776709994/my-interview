@@ -37,6 +37,17 @@ public interface KnowledgeDocumentMapper extends BaseMapper<KnowledgeDocument> {
     List<Map<String, Object>> searchBySimilarityWithScore(@Param("queryVector") String embedding, @Param("limit") int limit);
 
     /**
+     * 向量相似度检索（带分数，按知识库 ID 过滤）
+     * @param queryVector 查询向量（JSON 数组格式）
+     * @param limit 返回数量
+     * @param knowledgeBaseIds 知识库 ID 列表（匹配 parent_id）
+     * @return 包含相似度分数的 Map 列表
+     */
+    List<Map<String, Object>> searchBySimilarityWithScoreAndKb(@Param("queryVector") String queryVector,
+                                                               @Param("limit") int limit,
+                                                               @Param("knowledgeBaseIds") List<Long> knowledgeBaseIds);
+
+    /**
      * 自定义插入，处理 vector 类型转换
      */
     int insertVectorDocument(KnowledgeDocument document);

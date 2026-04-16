@@ -26,9 +26,14 @@ public class SmartRetrievalServiceImpl implements SmartRetrievalService {
 
     @Override
     public List<KnowledgeDocument> smartRetrieve(String queryVector) {
-        // 1. 初始召回：检索 Top-K 个候选文档
+        return smartRetrieve(queryVector, null);
+    }
+
+    @Override
+    public List<KnowledgeDocument> smartRetrieve(String queryVector, List<Long> knowledgeBaseIds) {
+        // 1. 初始召回：检索 Top-K 个候选文档（按知识库 ID 过滤）
         int initialTopK = retrievalConfig.getTopK();
-        List<Map<String, Object>> candidates = documentMapper.searchBySimilarityWithScore(queryVector, initialTopK);
+        List<Map<String, Object>> candidates = documentMapper.searchBySimilarityWithScoreAndKb(queryVector, initialTopK, knowledgeBaseIds);
         
         log.info("🔍 初始召回 {} 个候选文档", candidates.size());
         

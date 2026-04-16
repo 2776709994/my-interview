@@ -84,7 +84,7 @@ export function useInterviewConfig(options?: {
   const loadResumes = async () => {
     try {
       const data = await historyApi.getResumes();
-      setResumes(data.list || []);
+      setResumes(data.records || []);
     } catch (err) {
       console.error('Failed to load resumes:', err);
     }

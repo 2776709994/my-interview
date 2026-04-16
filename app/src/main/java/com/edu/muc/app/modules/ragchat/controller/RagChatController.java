@@ -1,6 +1,7 @@
 package com.edu.muc.app.modules.ragchat.controller;
 
 import com.edu.muc.app.common.Result;
+import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.modules.ragchat.domain.ChatSession;
 import com.edu.muc.app.modules.ragchat.dto.RagChatSessionDetail;
 import com.edu.muc.app.modules.ragchat.dto.RagChatSessionListItem;
@@ -85,10 +86,15 @@ public class RagChatController {
      */
     @PutMapping("/sessions/{sessionId}/knowledge-bases")
     public Result<Void> updateKnowledgeBases(@PathVariable Long sessionId, @RequestBody Map<String, Object> req) {
-        @SuppressWarnings("unchecked")
-        List<Object> rawList = (List<Object>) req.get("knowledgeBaseIds");
+        Object kbIdsObj = req.get("knowledgeBaseIds");
+        if (kbIdsObj == null || !(kbIdsObj instanceof List<?> rawList)) {
+            throw new BusinessException("VALIDATION_ERROR", "knowledgeBaseIds 必须为非空列表");
+        }
         List<Long> knowledgeBaseIds = rawList.stream()
-                .map(obj -> ((Number) obj).longValue())
+                .map(obj -> {
+                    if (obj instanceof Number n) return n.longValue();
+                    throw new IllegalArgumentException("knowledgeBaseIds 包含非数字元素");
+                })
                 .toList();
         ragChatService.updateKnowledgeBases(sessionId, knowledgeBaseIds);
         return Result.success(null);
@@ -118,7 +124,21 @@ public class RagChatController {
     @PostMapping(value = "/sessions/{sessionId}/messages/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter sendMessageStream(@PathVariable Long sessionId, @RequestBody Map<String, String> req) {
         String question = req.get("question");
-        log.info("🔍 开始 RAG 流式问答，会话ID: {}, 问题: {}", sessionId, question);
-        return ragChatService.sendMessageStream(sessionId, question);
+
+        // 输入校验：空值检查
+        if (question == null || question.trim().isEmpty()) {
+            throw new BusinessException("VALIDATION_ERROR", "提问内容不能为空");
+        }
+
+        // 输入校验：长度限制（防止 Prompt Injection 和过大请求）
+        if (question.length() > 2000) {
+            throw new BusinessException("VALIDATION_ERROR", "提问内容不能超过2000字");
+        }
+
+        // 输入校验：移除控制字符（防止注入）
+        String sanitized = question.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]", "");
+
+        log.info("🔍 开始 RAG 流式问答，会话ID: {}, 问题: {}", sessionId, sanitized);
+        return ragChatService.sendMessageStream(sessionId, sanitized);
     }
 }

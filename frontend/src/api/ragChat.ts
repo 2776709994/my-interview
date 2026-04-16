@@ -107,13 +107,15 @@ export const ragChatApi = {
 
   /**
    * 发送消息（流式SSE）
+   * @param abortController 用于取消请求（组件卸载时调用 abort()）
    */
   async sendMessageStream(
     sessionId: number,
     question: string,
     onMessage: (chunk: string) => void,
     onComplete: () => void,
-    onError: (error: Error) => void
+    onError: (error: Error) => void,
+    abortController?: AbortController
   ): Promise<void> {
     try {
       const response = await fetch(
@@ -122,6 +124,7 @@ export const ragChatApi = {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question }),
+          signal: abortController?.signal,
         }
       );
 
@@ -143,72 +146,77 @@ export const ragChatApi = {
         throw new Error('无法获取响应流');
       }
 
-      const decoder = new TextDecoder();
-      let buffer = '';
+      try {
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-      // 从 SSE 事件中提取内容
-      const extractEventContent = (event: string): string | null => {
-        if (!event.trim()) return null;
+        // 从 SSE 事件中提取内容
+        const extractEventContent = (event: string): string | null => {
+          if (!event.trim()) return null;
 
-        const lines = event.split('\n');
-        const contentParts: string[] = [];
+          const lines = event.split('\n');
+          const contentParts: string[] = [];
 
-        for (const line of lines) {
-          if (line.startsWith('data:')) {
-            // 提取 data: 后面的内容，保留原始格式（包括缩进空格）
-            // ServerSentEvent 不会在 data: 后添加额外空格
-            contentParts.push(line.substring(5));
-          }
-        }
-
-        if (contentParts.length === 0) return null;
-
-        // 合并内容并还原转义的换行符
-        return contentParts.join('')
-          .replace(/\\n/g, '\n')
-          .replace(/\\r/g, '\r');
-      };
-
-      while (true) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          if (buffer) {
-            const content = extractEventContent(buffer);
-            if (content) {
-              onMessage(content);
+          for (const line of lines) {
+            if (line.startsWith('data:')) {
+              // 提取 data: 后面的内容，保留原始格式（包括缩进空格）
+              // ServerSentEvent 不会在 data: 后添加额外空格
+              contentParts.push(line.substring(5));
             }
           }
-          onComplete();
-          break;
-        }
 
-        buffer += decoder.decode(value, { stream: true });
+          if (contentParts.length === 0) return null;
 
-        // SSE 事件以 \n\n 分隔，但也需要处理单行的情况
-        let newlineIndex = buffer.indexOf('\n\n');
-        if (newlineIndex === -1) {
-          // 如果没有找到 \n\n，尝试处理单行 data: 格式
-          const singleLineIndex = buffer.indexOf('\n');
-          if (singleLineIndex !== -1 && buffer.substring(0, singleLineIndex).startsWith('data:')) {
-            const line = buffer.substring(0, singleLineIndex);
-            const content = extractEventContent(line);
-            if (content) {
-              onMessage(content);
+          // 合并内容并还原转义的换行符
+          return contentParts.join('')
+            .replace(/\\n/g, '\n')
+            .replace(/\\r/g, '\r');
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            if (buffer) {
+              const content = extractEventContent(buffer);
+              if (content) {
+                onMessage(content);
+              }
             }
-            buffer = buffer.substring(singleLineIndex + 1);
+            onComplete();
+            break;
           }
-          continue;
-        }
 
-        // 处理完整的事件块
-        const eventBlock = buffer.substring(0, newlineIndex);
-        buffer = buffer.substring(newlineIndex + 2);
+          buffer += decoder.decode(value, { stream: true });
 
-        const content = extractEventContent(eventBlock);
-        if (content !== null) {
-          onMessage(content);
+          // SSE 事件以 \n\n 分隔，但也需要处理单行的情况
+          let newlineIndex = buffer.indexOf('\n\n');
+          if (newlineIndex === -1) {
+            // 如果没有找到 \n\n，尝试处理单行 data: 格式
+            const singleLineIndex = buffer.indexOf('\n');
+            if (singleLineIndex !== -1 && buffer.substring(0, singleLineIndex).startsWith('data:')) {
+              const line = buffer.substring(0, singleLineIndex);
+              const content = extractEventContent(line);
+              if (content) {
+                onMessage(content);
+              }
+              buffer = buffer.substring(singleLineIndex + 1);
+            }
+            continue;
+          }
+
+          // 处理完整的事件块
+          const eventBlock = buffer.substring(0, newlineIndex);
+          buffer = buffer.substring(newlineIndex + 2);
+
+          const content = extractEventContent(eventBlock);
+          if (content !== null) {
+            onMessage(content);
+          }
         }
+      } finally {
+        reader.releaseLock();
+        reader.cancel();
       }
     } catch (error) {
       onError(new Error(getErrorMessage(error)));

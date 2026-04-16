@@ -51,11 +51,11 @@ export default function HistoryList({onSelectResume}: HistoryListProps) {
     if (!isPolling) setLoading(true);
     try {
       const data: PaginatedResumeList = await historyApi.getResumes(pagination.page);
-      setResumes(data.list);
+      setResumes(data.records);
       setPagination({
-        page: data.page,
+        page: data.current,
         total: data.total,
-        totalPages: data.totalPages,
+        totalPages: data.pages,
         size: data.size,
       });
     } catch (err) {

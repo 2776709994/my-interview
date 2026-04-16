@@ -1,8 +1,9 @@
 package com.edu.muc.app.modules.resume.service;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.domain.ResumeAnalyses;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
@@ -10,7 +11,6 @@ import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.Map;
 
 /**
 * @author LINJH
@@ -33,7 +33,7 @@ public interface ResumesService extends IService<Resumes>{
      * 分页获取简历列表
      * @param page 页码（从 1 开始）
      * @param size 每页大小
-     * @return 分页结果（包含 list、total、page、size、totalPages）
+     * @return 分页结果
      */
-    Map<String, Object> getListWithPagination(int page, int size);
+    IPage<ResumeListItemDTO> getListWithPagination(int page, int size);
 }

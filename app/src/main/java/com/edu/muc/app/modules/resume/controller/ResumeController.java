@@ -1,10 +1,12 @@
 package com.edu.muc.app.modules.resume.controller;
 
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.edu.muc.app.common.Result;
 import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
+import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
 import com.edu.muc.app.modules.resume.service.ResumesService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,13 +32,14 @@ public class ResumeController {
     /**
      * 获取简历列表（分页查询，默认每页 10 个）
      * @param page 页码（从 1 开始）
+     * @param size 每页大小
      * @return
      */
     @GetMapping()
-    public Result<Map<String, Object>> getList(
-            @RequestParam(defaultValue = "1") int page) {
-        Map<String, Object> result = resumesService.getListWithPagination(page, 10);
-        return Result.success(result);
+    public Result<IPage<ResumeListItemDTO>> getList(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "10") int size) {
+        return Result.success(resumesService.getListWithPagination(page, size));
     }
 
 

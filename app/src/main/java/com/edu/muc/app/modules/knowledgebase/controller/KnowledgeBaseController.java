@@ -1,20 +1,28 @@
 package com.edu.muc.app.modules.knowledgebase.controller;
 
+import com.edu.muc.app.common.JsonUtils;
 import com.edu.muc.app.common.Result;
+import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
 import com.edu.muc.app.modules.knowledgebase.dto.KnowledgeDocumentDTO;
 import com.edu.muc.app.modules.knowledgebase.dto.KnowledgeStatsDTO;
+import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
 import com.edu.muc.app.modules.knowledgebase.service.KnowledgeDocumentService;
+import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 知识库控制器
@@ -26,6 +34,10 @@ import java.util.Map;
 public class KnowledgeBaseController {
 
     private final KnowledgeDocumentService documentService;
+    private final SmartRetrievalService smartRetrievalService;
+    private final EmbeddingModel embeddingModel;
+    private final ChatClient chatClient;
+    private final KnowledgeDocumentMapper documentMapper;
 
     /**
      * 上传知识文档
@@ -126,12 +138,40 @@ public class KnowledgeBaseController {
      */
     @PostMapping(value = "/query/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter queryStream(@RequestBody Map<String, Object> req) {
-        @SuppressWarnings("unchecked")
-        List<Long> knowledgeBaseIds = (List<Long>) req.get("knowledgeBaseIds");
-        String question = (String) req.get("question");
+        // 类型安全检查：knowledgeBaseIds
+        Object kbIdsObj = req.get("knowledgeBaseIds");
+        List<Long> knowledgeBaseIds = List.of();
+        if (kbIdsObj == null) {
+            log.warn("knowledgeBaseIds 为空，将检索全部知识库");
+        } else if (kbIdsObj instanceof List<?> rawList) {
+            try {
+                knowledgeBaseIds = rawList.stream()
+                        .map(obj -> {
+                            if (obj instanceof Number n) {
+                                return n.longValue();
+                            }
+                            throw new IllegalArgumentException("knowledgeBaseIds 包含非数字元素: " + obj);
+                        })
+                        .toList();
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException("VALIDATION_ERROR", "knowledgeBaseIds 类型不正确: " + e.getMessage());
+            }
+        } else {
+            throw new BusinessException("VALIDATION_ERROR", "knowledgeBaseIds 类型不正确，期望 List");
+        }
 
-        log.info("🔍 开始 RAG 流式查询，问题: {}, 知识库 IDs: {}", question, knowledgeBaseIds);
-        return documentService.queryStream(knowledgeBaseIds, question);
+        // 问题输入校验
+        String question = req.get("question") != null ? (String) req.get("question") : "";
+        if (question.trim().isEmpty()) {
+            throw new BusinessException("VALIDATION_ERROR", "提问内容不能为空");
+        }
+        if (question.length() > 2000) {
+            throw new BusinessException("VALIDATION_ERROR", "提问内容不能超过2000字");
+        }
+        String sanitized = question.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]", "");
+
+        log.info("🔍 开始 RAG 流式查询，问题: {}, 知识库 IDs: {}", sanitized, knowledgeBaseIds);
+        return documentService.queryStream(knowledgeBaseIds, sanitized);
     }
 
     /**
@@ -142,4 +182,70 @@ public class KnowledgeBaseController {
         documentService.revectorize(id);
         return Result.success();
     }
+
+    /**
+     * 获取文档完整内容（用于评估脚本）
+     */
+    @GetMapping("/{id}/content")
+    public Result<KnowledgeDocument> getDocumentContent(@PathVariable Long id) {
+        KnowledgeDocument doc = documentMapper.selectById(id);
+        if (doc == null) {
+            return Result.error("文档不存在");
+        }
+        // 只允许获取父文档，排除 chunk 子文档
+        if (doc.getParentId() != null) {
+            return Result.error("只能获取父文档");
+        }
+        return Result.success(doc);
+    }
+
+    /**
+     * 非流式 RAG 查询（用于评估脚本，不持久化消息）
+     */
+    @PostMapping("/query")
+    public Result<EvalQueryResponse> query(@RequestBody Map<String, Object> req) {
+        String question = req.get("question") != null ? (String) req.get("question") : "";
+        if (question.trim().isEmpty()) {
+            throw new BusinessException("VALIDATION_ERROR", "提问内容不能为空");
+        }
+        if (question.length() > 2000) {
+            throw new BusinessException("VALIDATION_ERROR", "提问内容不能超过2000字");
+        }
+
+        // 1. 将问题向量化
+        float[] qEmbedding = embeddingModel.embed(question);
+        String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
+
+        // 2. 智能检索相关文档片段
+        List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson);
+
+        // 3. 构建上下文
+        List<String> contextList = docs.stream()
+                .map(doc -> String.format("【%s】\n%s", doc.getName(), doc.getContent()))
+                .collect(Collectors.toList());
+        String context = String.join("\n\n", contextList);
+
+        // 4. 非流式调用 AI
+        String sysPrompt = "你是一个专业的知识库助手。请根据提供的上下文信息回答问题。如果上下文中没有相关信息，请诚实地告诉用户。回答时尽量引用具体的文档来源。";
+        String userPrompt = String.format("问题：%s\n\n上下文：\n%s", question, context);
+        String answer = chatClient.prompt()
+                .system(sysPrompt)
+                .user(userPrompt)
+                .call()
+                .content();
+
+        // 5. 组装响应
+        List<Map<String, String>> contexts = docs.stream().map(doc -> {
+            Map<String, String> ctx = new HashMap<>();
+            ctx.put("content", String.format("【%s】\n%s", doc.getName(), doc.getContent()));
+            return ctx;
+        }).collect(Collectors.toList());
+
+        return Result.success(new EvalQueryResponse(answer, contexts));
+    }
+
+    /**
+     * 非流式查询响应 DTO
+     */
+    private record EvalQueryResponse(String answer, List<Map<String, String>> contexts) {}
 }

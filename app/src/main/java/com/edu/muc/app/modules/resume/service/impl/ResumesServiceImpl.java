@@ -1,6 +1,8 @@
 package com.edu.muc.app.modules.resume.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
@@ -22,7 +24,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.math.BigInteger;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -137,38 +138,26 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     }
 
 
-    /**
-     * 获取简历列表（带分页）
-     * @param page 页码（从 1 开始）
-     * @param size 每页大小
-     * @return
-     */
     @Override
-    public Map<String, Object> getListWithPagination(int page, int size) {
-        // 参数校验
-        if (page < 1) page = 1;
-
-        // 1. 查询总数
-        long total = resumesMapper.selectCount(new LambdaQueryWrapper<>());
-
-        // 2. 分页查询简历
-        List<Resumes> resumesList = resumesMapper.selectList(
+    public IPage<ResumeListItemDTO> getListWithPagination(int page, int size) {
+        Page<Resumes> resumePage = resumesMapper.selectPage(
+                new Page<>(page, size),
                 new LambdaQueryWrapper<Resumes>()
                         .orderByDesc(Resumes::getUploadedAt)
-                        .last("LIMIT " + size + " OFFSET " + ((page - 1) * size))
         );
 
+        List<ResumeListItemDTO> dtoList = buildDtoList(resumePage.getRecords());
+
+        Page<ResumeListItemDTO> result = new Page<>(resumePage.getCurrent(), resumePage.getSize(), resumePage.getTotal());
+        result.setRecords(dtoList);
+        return result;
+    }
+
+    private List<ResumeListItemDTO> buildDtoList(List<Resumes> resumesList) {
         if (resumesList.isEmpty()) {
-            Map<String, Object> result = new HashMap<>();
-            result.put("list", List.of());
-            result.put("total", 0);
-            result.put("page", page);
-            result.put("size", size);
-            result.put("totalPages", 0);
-            return result;
+            return List.of();
         }
 
-        // 3. 批量查询最新分析记录
         List<Long> resumeIds = resumesList.stream()
                 .map(Resumes::getId)
                 .collect(Collectors.toList());
@@ -182,20 +171,9 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
                         (existing, replacement) -> existing
                 ));
 
-        // 4. 组装 DTO
-        List<ResumeListItemDTO> dtoList = resumesList.stream()
+        return resumesList.stream()
                 .map(resume -> toListItemDTO(resume, analysesMap.get(resume.getId())))
                 .toList();
-
-        // 5. 返回分页结果
-        Map<String, Object> result = new HashMap<>();
-        result.put("list", dtoList);
-        result.put("total", total);
-        result.put("page", page);
-        result.put("size", size);
-        result.put("totalPages", (int) Math.ceil((double) total / size));
-
-        return result;
     }
 
     @Override

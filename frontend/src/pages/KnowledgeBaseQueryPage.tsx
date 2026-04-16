@@ -59,12 +59,16 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
   // refs
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const rafRef = useRef<number>();
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const [, startTransition] = useTransition();
 
   useEffect(() => {
     loadKnowledgeBases();
     loadSessions();
+    return () => {
+      abortControllerRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -305,6 +309,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     };
 
     try {
+      abortControllerRef.current = new AbortController();
       await ragChatApi.sendMessageStream(
         sessionId,
         userQuestion,
@@ -327,12 +332,17 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
           console.error('流式查询失败:', error);
           updateAssistantMessage(fullContent || error.message || '回答失败，请重试');
           setLoading(false);
-        }
+        },
+        abortControllerRef.current
       );
     } catch (err) {
-      console.error('发起流式查询失败:', err);
-      updateAssistantMessage(err instanceof Error ? err.message : '回答失败，请重试');
+      if ((err as Error).name !== 'AbortError') {
+        console.error('发起流式查询失败:', err);
+        updateAssistantMessage(err instanceof Error ? err.message : '回答失败，请重试');
+      }
       setLoading(false);
+    } finally {
+      abortControllerRef.current = null;
     }
   };
 

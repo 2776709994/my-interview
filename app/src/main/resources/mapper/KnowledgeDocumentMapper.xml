@@ -30,4 +30,23 @@
         ]]>
     </select>
 
+    <!-- 向量相似度检索，返回相似度分数，按知识库 ID 过滤 -->
+    <select id="searchBySimilarityWithScoreAndKb" resultType="map">
+        <![CDATA[
+        SELECT *, (content_embedding <=> #{queryVector}::vector) AS similarity_score
+        FROM knowledge_documents
+        WHERE parent_id IS NOT NULL
+        ]]>
+        <if test="knowledgeBaseIds != null and !knowledgeBaseIds.isEmpty()">
+            AND parent_id IN
+            <foreach collection="knowledgeBaseIds" item="kbId" open="(" separator="," close=")">
+                #{kbId}
+            </foreach>
+        </if>
+        <![CDATA[
+        ORDER BY similarity_score ASC
+        LIMIT #{limit}
+        ]]>
+    </select>
+
 </mapper>

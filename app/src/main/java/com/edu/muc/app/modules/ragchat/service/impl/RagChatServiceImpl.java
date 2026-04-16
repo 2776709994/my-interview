@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -249,6 +251,22 @@ public class RagChatServiceImpl implements RagChatService {
         );
     }
 
+    // 加载提示词模板（仅一次）
+    private static final String SYSTEM_PROMPT_TEMPLATE;
+    private static final String USER_PROMPT_TEMPLATE;
+    static {
+        try {
+            ClassPathResource sysResource = new ClassPathResource("prompts/knowledgebase-query-system.st");
+            SYSTEM_PROMPT_TEMPLATE = org.springframework.util.StreamUtils.copyToString(
+                    sysResource.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
+            ClassPathResource userResource = new ClassPathResource("prompts/knowledgebase-query-user.st");
+            USER_PROMPT_TEMPLATE = org.springframework.util.StreamUtils.copyToString(
+                    userResource.getInputStream(), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new RuntimeException("加载提示词模板失败", e);
+        }
+    }
+
     @Override
     public SseEmitter sendMessageStream(Long sessionId, String question) {
         SseEmitter emitter = new SseEmitter(180000L); // 3分钟超时
@@ -280,8 +298,8 @@ public class RagChatServiceImpl implements RagChatService {
                 float[] qEmbedding = embeddingModel.embed(question);
                 String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
                 
-                // 2. 智能检索相关文档片段（带相似度过滤）
-                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson);
+                // 2. 智能检索相关文档片段（按会话关联的知识库 ID 过滤）
+                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson, knowledgeBaseIds);
                 
                 // 3. 构建上下文（使用 chunk 的内容，并标注来源）
                 String context = docs.stream()
@@ -293,23 +311,28 @@ public class RagChatServiceImpl implements RagChatService {
                 
                 log.info("🔍 RAG 检索到 {} 个相关文档片段", docs.size());
                 
-                // 4. 构建 Prompt
-                String sysPrompt = "你是一个专业的知识库助手。请根据提供的上下文信息回答问题。如果上下文中没有相关信息，请诚实地告诉用户。回答时尽量引用具体的文档来源。";
-                String userPrompt = String.format("问题：%s\n\n上下文：\n%s", question, context);
+                // 4. 使用模板构建 Prompt
+                String userPrompt = USER_PROMPT_TEMPLATE.replace("{context}", context)
+                        .replace("{question}", question);
 
                 // 5. 流式调用 AI
                 StringBuilder fullAnswer = new StringBuilder();
+                final AtomicReference<org.reactivestreams.Subscription> subRef = new AtomicReference<>();
                 chatClient.prompt()
-                        .system(sysPrompt)
+                        .system(SYSTEM_PROMPT_TEMPLATE)
                         .user(userPrompt)
                         .stream()
                         .content()
                         .doOnNext(chunk -> {
-                            try { 
+                            try {
                                 fullAnswer.append(chunk);
-                                emitter.send(chunk); 
-                            } catch (IOException e) { 
-                                throw new RuntimeException(e); 
+                                emitter.send(chunk);
+                            } catch (IOException e) {
+                                log.error("❌ SSE 发送失败，关闭连接", e);
+                                emitter.completeWithError(e);
+                                org.reactivestreams.Subscription sub = subRef.get();
+                                if (sub != null) sub.cancel();
+                                throw new RuntimeException(e);
                             }
                         })
                         .doOnComplete(() -> {
@@ -329,7 +352,7 @@ public class RagChatServiceImpl implements RagChatService {
                                         .filter(id -> id != null)
                                         .distinct()
                                         .toList();
-                                
+
                                 if (!parentIds.isEmpty()) {
                                     documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
                                             .setSql("question_count = question_count + 1")
@@ -339,11 +362,11 @@ public class RagChatServiceImpl implements RagChatService {
                                             .in(KnowledgeDocument::getId, parentIds));
                                 }
                             }
-                            
+
                             // 更新会话时间
                             session.setUpdatedAt(LocalDateTime.now());
                             sessionMapper.updateById(session);
-                            
+
                             emitter.complete();
                         })
                         .doOnError(err -> {

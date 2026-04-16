@@ -130,7 +130,7 @@ export default function HistoryList({ onSelectResume }: HistoryListProps) {
         historyApi.getResumes(),
         historyApi.getStatistics(),
       ]);
-      setResumes(resumeData.list || []);
+      setResumes(resumeData.records || []);
       setStats(statsData);
     } catch (err) {
       console.error('加载数据失败', err);
@@ -145,7 +145,7 @@ export default function HistoryList({ onSelectResume }: HistoryListProps) {
         historyApi.getResumes(),
         historyApi.getStatistics(),
       ]);
-      setResumes(resumeData.list || []);
+      setResumes(resumeData.records || []);
       setStats(statsData);
     } catch (err) {
       console.error('加载数据失败', err);
