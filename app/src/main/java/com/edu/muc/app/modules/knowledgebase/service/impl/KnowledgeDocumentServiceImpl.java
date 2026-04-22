@@ -82,8 +82,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             String content = tika.parseToString(file.getInputStream());
             log.info("✅ 文件解析成功，内容长度: {}", content.length());
 
-            // 4. 文本分块
-            List<String> chunks = splitTextIntoChunks(content, 600); // 每块约 600 字符
+            // 4. 文本分块：每块约 800 字符，重叠 150 字符（约 19%）
+            List<String> chunks = splitTextIntoChunks(content, 800);
             log.info("✅ 文本已分块，共 {} 块", chunks.size());
 
             // 5. 创建父文档记录（存储完整内容和元数据）
@@ -399,7 +399,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         }
 
         // 重叠大小（保留上下文）
-        int overlapSize = Math.min(200, chunkSize / 5);  // 重叠 20% 或最多 200 字符
+        int overlapSize = Math.min(150, chunkSize / 5);  // 重叠约 150 字符
         
         int start = 0;
         while (start < text.length()) {
@@ -536,7 +536,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 }
                 
                 // 重新分块
-                List<String> chunks = splitTextIntoChunks(content, 600);
+                List<String> chunks = splitTextIntoChunks(content, 800);
                 log.info("✅ 文本已重新分块，共 {} 块", chunks.size());
                 
                 // 为每个 chunk 创建子文档并生成向量

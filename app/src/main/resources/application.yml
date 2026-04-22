@@ -58,6 +58,6 @@ minio:
 # RAG 配置
 rag:
   retrieval:
-    top-k: 10              # 初始召回数量
-    final-top-k: 5         # 最终返回数量
-    similarity-threshold: 0.3  # 相似度阈值（余弦距离，越小越相似）
+    top-k: 15
+    final-top-k: 5
+    similarity-threshold: 0.3

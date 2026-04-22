@@ -12,13 +12,13 @@ public class RagRetrievalConfig {
     /**
      * 初始召回数量（从数据库检索的数量）
      */
-    private int topK = 10;
-    
+    private int topK = 15;
+
     /**
      * 最终返回数量（经过过滤后返回给 AI 的数量）
      */
     private int finalTopK = 5;
-    
+
     /**
      * 相似度阈值（余弦距离，越小越相似）
      * 范围：0-2，通常 0.3-0.5 之间
