@@ -27,7 +27,7 @@ spring:
         max-async-requests: 5
       chat:
         options:
-          model: qwen-max
+          model: deepseek-v4-flash
           temperature: 0.7
       embedding:
         options:

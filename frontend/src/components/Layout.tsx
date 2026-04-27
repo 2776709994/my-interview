@@ -108,11 +108,13 @@ export default function Layout() {
         <div className="p-6 border-b border-slate-100 dark:border-slate-700/50 flex items-center justify-between">
           <Link to="/history" className="flex items-center gap-3 group">
             <div className="w-11 h-11 bg-gradient-to-br from-primary-500 via-primary-600 to-accent-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-primary-500/40 group-hover:shadow-primary-500/60 transition-all duration-300 group-hover:scale-105">
-              <Sparkles className="w-5 h-5" />
+              <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+              </svg>
             </div>
             <div>
               <span className="text-lg font-bold bg-gradient-to-r from-slate-800 to-slate-600 dark:from-white dark:to-slate-200 bg-clip-text text-transparent tracking-tight block">
-                智能面试助手
+                TalentPilot
               </span>
             </div>
           </Link>
@@ -197,8 +199,8 @@ export default function Layout() {
         {/* 底部信息 */}
         <div className="p-4 border-t border-slate-100 dark:border-slate-700/50">
           <div className="px-4 py-3 bg-gradient-to-r from-primary-50 via-accent-50/50 to-primary-50 dark:from-primary-900/30 dark:via-accent-900/20 dark:to-slate-800/50 rounded-xl border border-primary-100/50 dark:border-primary-800/30">
-            <p className="text-xs text-primary-600 dark:text-primary-400 font-bold">AI 面试助手 v1.0</p>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Powered by AI · 智能面试新体验</p>
+            <p className="text-xs text-primary-600 dark:text-primary-400 font-bold">TalentPilot v1.0</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Powered by AI · 智能人才评估</p>
           </div>
         </div>
       </aside>
