@@ -19,6 +19,14 @@ spring:
   profiles:
     active: default
 
+  mvc:
+    # Spring Boot 3.5+ 对缺失静态资源默认抛 NoResourceFoundException，关闭它直接返回 404
+    throw-exception-if-no-resource-found: false
+  web:
+    resources:
+      # 纯 API 项目，禁用静态资源映射，避免 favicon.ico 等请求报错
+      add-mappings: false
+
   ai:
     dashscope:
       api-key: ${DASHSCOPE_API_KEY}
@@ -27,11 +35,12 @@ spring:
         max-async-requests: 5
       chat:
         options:
-          model: deepseek-v4-flash
+          model: glm-5.2
           temperature: 0.7
       embedding:
         options:
-          model: text-embedding-v2
+          model: text-embedding-v4
+          dimensions: 1536
     retry:
       max-attempts: 3
       backoff:
