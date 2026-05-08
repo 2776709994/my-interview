@@ -3,7 +3,8 @@
 > 🎯 基于 [Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide) 的 Maven 复刻与优化实践项目，融合 RAG 知识库问答与 AI 多维度评估的全栈应用。
 
 [![Java](https://img.shields.io/badge/Java-21-orange.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.7-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.1-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring AI](https://img.shields.io/badge/Spring%20AI-2.0.0--M4-blue.svg)](https://spring.io/projects/spring-ai)
 [![React](https://img.shields.io/badge/React-18-blue.svg)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue.svg)](https://www.typescriptlang.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue.svg)](https://www.postgresql.org/)
@@ -13,24 +14,29 @@
 
 ## 📖 项目简介
 
-TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分析**、**模拟面试**、**知识库 RAG 问答** 三大核心能力，帮助求职者全方位提升面试表现。
+TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分析**、**模拟面试**、**知识库 RAG 问答**、**面试日程管理** 等核心能力，帮助求职者全方位提升面试表现。
 
 ### 核心功能
 
-- 📄 **智能简历分析**：上传 PDF/Word 简历，AI 从项目深度、技能匹配、内容完整性等 5 个维度进行评分，并给出可执行的改进建议
-- 🎤 **AI 模拟面试**：基于简历和岗位需求生成个性化面试题，支持断点续答，交卷后异步生成多维度评估报告
-- 📚 **知识库 RAG 问答**：上传技术文档构建个人知识库，基于 pgvector 向量检索 + 通义千问流式生成，实现"上传即问即答"
-- 💬 **多轮对话**：支持会话管理、消息历史、知识库关联，SSE 流式输出体验丝滑
+1. 📄 **智能简历分析**：上传 PDF/Word 简历，AI 从项目深度、技能匹配、内容完整性等 5 个维度进行评分，并给出可执行的改进建议
+2. 🎤 **AI 模拟面试**：基于简历和岗位需求生成个性化面试题，支持断点续答，交卷后异步生成多维度评估报告
+3. 📚 **知识库 RAG 问答**：上传技术文档构建个人知识库，基于 pgvector 向量检索 + 流式生成，实现"上传即问即答"
+4. 💬 **多轮对话**：支持会话管理、消息历史、知识库关联，SSE 流式输出体验丝滑
+5. 📅 **面试日程管理**：日历视图管理面试安排，支持状态自动流转（待面试 → 进行中 → 已完成）
+6. ⚙️ **LLM Provider 管理**：多模型服务配置、连通性测试、默认模型切换，支持动态切换 AI 提供商
 
 ### 与原项目的差异
 
-本项目在原项目基础上进行了工程化优化：
+本项目在原项目基础上进行了深度工程化优化：
 
 | 维度 | 优化内容 |
 |------|---------|
-| 代码质量 | 枚举替代魔法字符串、统一异常处理、统一响应格式 |
+| 框架升级 | Spring Boot 4.0.1 + Spring AI 2.0.0-M4，拥抱最新生态 |
+| 并发模型 | Java 21 虚拟线程（Virtual Threads），替代传统线程池，IO 密集型场景性能大幅提升 |
+| 代码质量 | 枚举替代魔法字符串、统一异常处理 + 错误码体系、统一响应格式 |
 | 异步架构 | Redis Stream 实现可靠的任务队列，支持消费者组、ACK 确认、断点续传 |
-| 容错机制 | AI 调用指数退避重试、PDF 解析 30 秒超时控制、线程池优雅关闭 |
+| AI 架构 | LLM Provider 多模型管理、API Key 加密存储、Prompt Injection 防护 |
+| 容错机制 | AI 调用指数退避重试、PDF 解析超时控制、虚拟线程 Executor 优雅关闭 |
 | 工程实践 | Docker Compose 一键部署、环境变量配置化、HNSW 向量索引加速 |
 
 ---
@@ -41,12 +47,12 @@ TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分�
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| Java | 21 | 编程语言 |
-| Spring Boot | 3.3.7 | Web 框架 |
-| Spring AI Alibaba | 1.0.0.2 | AI 集成（通义千问 qwen-max + text-embedding-v2） |
-| MyBatis-Plus | 3.5.9 | ORM 框架 |
+| Java | 21 | 编程语言（启用虚拟线程） |
+| Spring Boot | 4.0.1 | Web 框架 |
+| Spring AI | 2.0.0-M4 | AI 集成（OpenAI 兼容模式，通过 DashScope 调用通义千问） |
+| MyBatis-Plus | 3.5.16 | ORM 框架（spring-boot4-starter） |
 | PostgreSQL | 16 | 关系数据库 |
-| pgvector | - | 向量存储与相似度检索 |
+| pgvector | - | 向量存储与相似度检索（1024 维，HNSW 索引） |
 | Redis | 7 | 缓存 + Stream 消息队列 |
 | MinIO | 8.6.0 | 对象存储（简历/文档文件） |
 | Apache Tika | 2.9.2 | 文档内容解析（PDF/Word/TXT） |
@@ -83,11 +89,11 @@ TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分�
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                    Frontend (React + Vite)                    │
-│   简历管理  │  模拟面试  │  知识库管理  │  RAG 多轮对话       │
+│   简历管理 │ 模拟面试 │ 知识库管理 │ RAG 对话 │ 系统设置     │
 └────────────────────────┬─────────────────────────────────────┘
                          │ HTTP / SSE
 ┌────────────────────────▼─────────────────────────────────────┐
-│                  Backend (Spring Boot 3.3)                    │
+│                  Backend (Spring Boot 4.0)                    │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │  Controller 层  (REST API + SSE 流式接口)              │  │
 │  └────────────────────────────────────────────────────────┘  │
@@ -96,6 +102,7 @@ TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分�
 │  └────────────────────────────────────────────────────────┘  │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │  Infrastructure (MinIO / Redis Stream / ChatClient)    │  │
+│  │                 (LLM Provider Registry / 虚拟线程)      │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────┬──────────────────┬────────────────────┬───────────────┘
        │                  │                    │
@@ -111,7 +118,7 @@ TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分�
 API 请求  ──▶  RedisStreamProducer  ──▶  [Redis Stream]  ──▶  Consumer 监听
                                                                   │
                                                                   ▼
-                                                          线程池异步执行
+                                                          虚拟线程异步执行
                                                           (AI 调用 / 文件解析)
                                                                   │
                                                                   ▼
@@ -132,8 +139,12 @@ my-interview/
 ├── app/                              # Spring Boot 后端
 │   ├── src/main/java/com/edu/muc/app/
 │   │   ├── common/                   # 通用模块
-│   │   │   ├── config/               # AiConfig, CorsConfig, ThreadPoolConfig
-│   │   │   ├── exception/            # BusinessException, GlobalExceptionHandler
+│   │   │   ├── ai/                   # LlmProviderRegistry, StructuredOutputInvoker
+│   │   │   ├── config/               # AiConfig, ThreadPoolConfig (虚拟线程)
+│   │   │   ├── constant/             # 常量定义
+│   │   │   ├── evaluation/           # 统一评估服务
+│   │   │   ├── exception/            # BusinessException, GlobalExceptionHandler, ErrorCode
+│   │   │   ├── model/                # 通用模型 (AsyncTaskStatus)
 │   │   │   ├── Result.java           # 统一响应体
 │   │   │   └── JsonUtils.java        # JSON 工具类
 │   │   ├── infrastructure/           # 基础设施层
@@ -142,8 +153,11 @@ my-interview/
 │   │   └── modules/                  # 业务模块
 │   │       ├── resume/               # 简历管理（上传→异步分析）
 │   │       ├── interview/            # 模拟面试（出题→答题→异步评估）
+│   │       ├── interviewschedule/    # 面试日程（日历管理→状态流转）
 │   │       ├── knowledgebase/        # 知识库（文档→分块→向量化→检索）
-│   │       └── ragchat/              # RAG 多轮对话（SSE 流式）
+│   │       ├── ragchat/              # RAG 多轮对话（SSE 流式）
+│   │       ├── llmprovider/          # LLM Provider 管理（CRUD→连通性测试）
+│   │       └── voiceinterview/       # 语音面试（预留）
 │   └── src/main/resources/
 │       ├── prompts/                  # AI 提示词模板（.st 文件）
 │       ├── mapper/                   # MyBatis XML 映射
@@ -159,7 +173,9 @@ my-interview/
 │       └── utils/                    # 工具函数
 │
 ├── docker/
-│   └── postgres/init.sql             # 数据库初始化脚本
+│   └── postgres/
+│       ├── init.sql                  # 数据库初始化脚本
+│       └── migrations/               # 增量迁移脚本
 ├── docker-compose.yml                # 服务编排
 └── README.md
 ```
@@ -170,10 +186,10 @@ my-interview/
 
 ### 前置要求
 
-- **Java 21+**（推荐 Eclipse Temurin 发行版）
-- **Node.js 18+** 和 **pnpm**
-- **Docker & Docker Compose**
-- **通义千问 API Key**（[获取地址](https://dashscope.console.aliyun.com/)）
+1. **Java 21+**（推荐 Eclipse Temurin 发行版）
+2. **Node.js 18+** 和 **pnpm**
+3. **Docker & Docker Compose**
+4. **DashScope API Key**（[获取地址](https://dashscope.console.aliyun.com/)）
 
 ### 1. 克隆项目
 
@@ -187,14 +203,14 @@ cd my-interview
 在项目根目录创建 `.env` 文件：
 
 ```bash
-# 必填：通义千问 API Key
+# 必填：DashScope API Key
 DASHSCOPE_API_KEY=your-api-key-here
 
-# 可选：AI 模型（默认 qwen-max）
-AI_MODEL=qwen-max
+# 可选：AI 模型（默认 glm-5.2）
+AI_MODEL=glm-5.2
 
 # 可选：数据库密码（默认 password）
-POSTGRES_PASSWORD=password
+DB_PASSWORD=password
 
 # 可选：面试配置
 APP_INTERVIEW_FOLLOW_UP_COUNT=2
@@ -242,8 +258,8 @@ cd app
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `DASHSCOPE_API_KEY` | 通义千问 API Key（**必填**） | - |
-| `AI_MODEL` | AI 对话模型 | `qwen-max` |
+| `DASHSCOPE_API_KEY` | DashScope API Key（**必填**） | - |
+| `AI_MODEL` | AI 对话模型 | `glm-5.2` |
 | `DB_USERNAME` / `DB_PASSWORD` | 数据库凭证 | `postgres` / `password` |
 | `REDIS_HOST` / `REDIS_PORT` | Redis 地址 | `localhost` / `6379` |
 | `MINIO_ENDPOINT` | MinIO 地址 | `http://localhost:9002` |
@@ -261,11 +277,11 @@ cd app
 **流程**：上传 → MD5 查重 → MinIO 存储 → Redis Stream 异步任务 → Tika 解析 → AI 五维评分
 
 **AI 评分维度**（总分 100）：
-- 项目经验（40 分）：技术深度、业务闭环、量化产出
-- 技能匹配（20 分）：技术栈专业度
-- 内容完整性（15 分）：模块齐全度
-- 结构清晰度（15 分）：格式规范
-- 表达专业性（10 分）：语言精炼度
+1. 项目经验（40 分）：技术深度、业务闭环、量化产出
+2. 技能匹配（20 分）：技术栈专业度
+3. 内容完整性（15 分）：模块齐全度
+4. 结构清晰度（15 分）：格式规范
+5. 表达专业性（10 分）：语言精炼度
 
 **特性**：MD5 去重、30 秒解析超时、AI 调用 3 次指数退避重试、分析状态机（PENDING/PROCESSING/COMPLETED/FAILED）。
 
@@ -276,25 +292,43 @@ cd app
 **问题分布**：50% 技术核心 + 30% 项目经验 + 20% 系统设计
 
 **特性**：
-- 断点续答：支持暂存答案、查找未完成会话
-- 白卷处理：未答题时生成建设性的零分报告
-- 多维度报告：总分 + 优点 + 改进项 + 分类评分 + 参考答案
+1. 断点续答：支持暂存答案、查找未完成会话
+2. 白卷处理：未答题时生成建设性的零分报告
+3. 多维度报告：总分 + 优点 + 改进项 + 分类评分 + 参考答案
+4. topicSummary 去重：避免历史面试中重复出题
 
-### 3. 知识库模块（KnowledgeBase）
+### 3. 面试日程模块（InterviewSchedule）
 
-**流程**：上传文档 → Tika 解析 → 智能分块（800 字符/块，150 字符重叠）→ 向量化 → pgvector 存储 → 余弦相似度检索
+**流程**：创建日程 → 日历展示 → 状态自动流转（PENDING → IN_PROGRESS → COMPLETED）
+
+**特性**：日历视图、面试信息解析（公司/职位/时间/轮次）、状态定时更新。
+
+### 4. 知识库模块（KnowledgeBase）
+
+**流程**：上传文档 → Tika 解析 → 智能分块（800 字符/块，150 字符重叠）→ 向量化（1024 维）→ pgvector 存储 → 余弦相似度检索
 
 **父子文档设计**：
 - 父文档：存储完整内容，`parent_id = NULL`
 - 子文档：存储分块内容 + 向量，`parent_id` 指向父文档
 
-**检索策略**：初始召回 Top-10 → 相似度阈值过滤（0.3）→ 最终返回 Top-5
+**检索策略**：初始召回 Top-15 → 相似度阈值过滤（0.3）→ 最终返回 Top-5
 
-### 4. RAG 聊天模块（RagChat）
+### 5. RAG 聊天模块（RagChat）
 
-**流程**：用户提问 → 问题向量化 → 按知识库过滤检索 → 构建 Prompt → SSE 流式生成 → 持久化消息
+**流程**：用户提问 → 问题改写（防 Prompt Injection）→ 向量化检索 → 构建 Prompt → SSE 流式生成 → 持久化消息
 
 **特性**：多轮对话、会话置顶、知识库关联、流式输出、提问/访问统计。
+
+### 6. LLM Provider 管理模块
+
+**流程**：配置 Provider（Base URL + API Key + Model）→ 加密存储 → 连通性测试 → 设为默认
+
+**特性**：
+1. 多 Provider 管理：支持配置多个 AI 服务提供商
+2. API Key 加密：AES 加密存储，运行时解密
+3. 连通性测试：一键验证 Provider 可用性
+4. 动态切换：运行时切换默认 Chat/Embedding Provider
+5. 启动自动加载：应用启动时从数据库加载 Provider 配置
 
 ---
 
@@ -309,9 +343,13 @@ cd app
 | `interview_sessions` | 面试会话（技能方向 + 进度 + 评估状态） |
 | `interview_questions` | 面试题目（问题 + 类型 + 类别 + 参考答案） |
 | `interview_answers` | 用户答案（回答 + 评分 + AI 反馈） |
-| `knowledge_documents` | 知识文档（父子结构 + 向量字段 `vector(1536)`） |
+| `interview_schedule` | 面试日程（公司 + 职位 + 时间 + 状态） |
+| `knowledge_documents` | 知识文档（父子结构 + 向量字段 `vector(1024)`） |
+| `vector_store` | Spring AI 向量存储（自动管理） |
 | `chat_sessions` | RAG 聊天会话 |
 | `chat_messages` | RAG 聊天消息 |
+| `llm_provider_config` | LLM Provider 配置（加密 API Key） |
+| `llm_global_setting` | LLM 全局设置（默认 Provider） |
 
 **向量索引**：`knowledge_documents.content_embedding` 使用 HNSW 索引加速余弦相似度检索：
 
@@ -331,7 +369,7 @@ USING hnsw (content_embedding vector_cosine_ops);
 
 1. 在 `RedisStreamProducer` 中添加发送方法
 2. 创建 `@Component` 消费者，实现 `@PostConstruct` 启动监听线程
-3. 使用 `@Qualifier` 注入对应的线程池
+3. 使用 `@Qualifier` 注入对应的虚拟线程 Executor
 4. 实现 `@PreDestroy` 优雅关闭
 
 **添加新模块**：
@@ -340,9 +378,9 @@ USING hnsw (content_embedding vector_cosine_ops);
 
 ### 前端开发
 
-- API 调用统一通过 `@/api/request.ts` 封装的 axios 实例
-- 页面组件放 `pages/`，公共组件放 `components/`
-- 路由配置在 `App.tsx`
+1. API 调用统一通过 `@/api/request.ts` 封装的 axios 实例
+2. 页面组件放 `pages/`，公共组件放 `components/`
+3. 路由配置在 `App.tsx`
 
 ### 常用命令
 
@@ -374,9 +412,9 @@ docker-compose down -v          # 停止并清除数据
 **症状**：`Read timed out` 或分析任务长时间停留在 PROCESSING
 
 **解决**：
-- 检查 `DASHSCOPE_API_KEY` 是否正确
-- 检查网络是否能访问通义千问 API
-- 后端已内置 3 次指数退避重试（2s → 4s → 8s）
+1. 检查 `DASHSCOPE_API_KEY` 是否正确
+2. 检查网络是否能访问 DashScope API
+3. 后端已内置 3 次指数退避重试（2s → 4s → 8s）
 
 ### 2. PDF 解析结果为空
 
@@ -396,13 +434,19 @@ docker ps | grep redis          # 检查 Redis 是否运行
 docker restart interview-redis2 # 重启 Redis
 ```
 
-### 4. 向量检索无结果
+### 4. 向量维度不匹配
 
-**症状**：知识库问答返回"未找到相关信息"
+**症状**：`expected 1024 dimensions, not 1536`
 
 **解决**：
-- 确认文档已上传且 `vector_status = COMPLETED`
-- 检查 `rag.retrieval.similarity-threshold` 配置（默认 0.3，可适当调高）
+```bash
+# 清除旧向量数据并重建
+docker exec <postgres-container> psql -U postgres -d interview_guide -c \
+  "DROP INDEX IF EXISTS idx_knowledge_doc_embedding_hnsw;
+   ALTER TABLE knowledge_documents ALTER COLUMN content_embedding TYPE vector(1024) USING NULL;
+   UPDATE knowledge_documents SET content_embedding = NULL, vector_status = 'PENDING';
+   CREATE INDEX idx_knowledge_doc_embedding_hnsw ON knowledge_documents USING hnsw (content_embedding vector_cosine_ops);"
+```
 
 ### 5. 前端白屏
 
@@ -417,12 +461,12 @@ pnpm dev
 
 ## 📈 性能优化
 
-- **N+1 查询优化**：列表接口批量查询关联数据
-- **向量检索加速**：HNSW 索引 + 相似度阈值过滤
-- **异步处理**：耗时 AI 任务通过 Redis Stream 异步化
-- **流式响应**：SSE 实时推送，减少用户等待感
-- **连接池**：数据库、Redis、AI 客户端均配置连接池
-- **线程池隔离**：简历分析、RAG 查询、面试评估使用独立线程池
+1. **虚拟线程**：Java 21 Virtual Threads 替代传统线程池，IO 密集型任务并发能力大幅提升
+2. **N+1 查询优化**：列表接口批量查询关联数据
+3. **向量检索加速**：HNSW 索引 + 相似度阈值过滤
+4. **异步处理**：耗时 AI 任务通过 Redis Stream 异步化
+5. **流式响应**：SSE 实时推送，减少用户等待感
+6. **连接池**：数据库、Redis、AI 客户端均配置连接池
 
 ---
 
@@ -448,12 +492,12 @@ pnpm dev
 
 本项目基于以下开源项目开发：
 
-- **[Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide)** — 智能面试助手原始项目（AGPL-3.0）
-- [Spring Boot](https://spring.io/projects/spring-boot)
-- [Spring AI Alibaba](https://github.com/alibaba/spring-ai-alibaba)
-- [React](https://react.dev/)
-- [通义千问](https://tongyi.aliyun.com/qianwen/)
-- [pgvector](https://github.com/pgvector/pgvector)
+1. **[Snailclimb/interview-guide](https://github.com/Snailclimb/interview-guide)** — 智能面试助手原始项目（AGPL-3.0）
+2. [Spring Boot](https://spring.io/projects/spring-boot)
+3. [Spring AI](https://spring.io/projects/spring-ai)
+4. [React](https://react.dev/)
+5. [通义千问 / DashScope](https://dashscope.console.aliyun.com/)
+6. [pgvector](https://github.com/pgvector/pgvector)
 
 感谢原作者 **Snailclimb** 的开源贡献！
 
