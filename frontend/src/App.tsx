@@ -22,6 +22,7 @@ const KnowledgeBaseManagePage = lazy(() => import('./pages/KnowledgeBaseManagePa
 // const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage'));
 const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 
 // Loading component
 const Loading = () => (
@@ -203,6 +204,9 @@ function App() {
 
             {/* 问答助手（知识库聊天） */}
             <Route path="knowledgebase/chat" element={<KnowledgeBaseQueryPageWrapper />} />
+
+            {/* 系统设置 */}
+            <Route path="settings" element={<SettingsPage />} />
           </Route>
 
         </Routes>

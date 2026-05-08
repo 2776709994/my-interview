@@ -1,7 +1,5 @@
 package com.edu.muc.app.common.exception;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -40,12 +38,11 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public Map<String, Object> handleBusinessException(BusinessException e) {
         Map<String, Object> response = new HashMap<>();
-        response.put("code", 400);
+        response.put("code", e.getCode());
         response.put("message", e.getMessage());
         response.put("errorCode", e.getErrorCode());
         response.put("timestamp", LocalDateTime.now().toString());
         return response;
-
     }
     
     /**

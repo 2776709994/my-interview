@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.edu.muc.app.modules.interviewschedule.mapper.InterviewScheduleMapper">
+
+    <select id="findByStatusAndInterviewTimeBefore"
+            resultType="com.edu.muc.app.modules.interviewschedule.model.InterviewScheduleEntity">
+        SELECT * FROM interview_schedule
+        WHERE status = #{status} AND interview_time &lt; #{cutoff}
+    </select>
+
+    <select id="findByStatus"
+            resultType="com.edu.muc.app.modules.interviewschedule.model.InterviewScheduleEntity">
+        SELECT * FROM interview_schedule
+        WHERE status = #{status}
+        ORDER BY interview_time ASC
+    </select>
+
+    <select id="findByInterviewTimeBetween"
+            resultType="com.edu.muc.app.modules.interviewschedule.model.InterviewScheduleEntity">
+        SELECT * FROM interview_schedule
+        WHERE interview_time BETWEEN #{start} AND #{end}
+        ORDER BY interview_time ASC
+    </select>
+
+</mapper>

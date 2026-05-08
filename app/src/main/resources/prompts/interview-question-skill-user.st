@@ -29,4 +29,8 @@
 
 ## 输出要求
 - questions 数组必须包含恰好 {questionCount} 个元素，不多不少
-- 每个主问题必须包含 topicSummary 字段：10 字以内的知识点摘要（用于历史去重）
+- 每个主问题必须包含 topicSummary 字段：10 字以内的知识点摘要（用于历史去重），格式示例：
+  - "Redis RDB/AOF 持久化对比"
+  - "MySQL 索引失效场景"
+  - "HashMap 扩容机制"
+  - "TCP 三次握手流程"

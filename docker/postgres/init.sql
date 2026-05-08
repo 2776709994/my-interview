@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     category VARCHAR(100),
     file_name VARCHAR(255) NOT NULL,
     content TEXT,
-    content_embedding vector(1536),
+    content_embedding vector(1024),
     file_size BIGINT,
     content_type VARCHAR(100),
     storage_key VARCHAR(255),
@@ -78,4 +78,49 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     type VARCHAR(20),
     content TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 面试日程表
+CREATE TABLE IF NOT EXISTS interview_schedule (
+    id BIGSERIAL PRIMARY KEY,
+    company_name VARCHAR(255) NOT NULL,
+    position VARCHAR(255) NOT NULL,
+    interview_time TIMESTAMP NOT NULL,
+    interview_type VARCHAR(50),
+    meeting_link TEXT,
+    round_number INTEGER DEFAULT 1,
+    interviewer VARCHAR(255),
+    notes TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_interview_schedule_status ON interview_schedule(status);
+CREATE INDEX IF NOT EXISTS idx_interview_schedule_time ON interview_schedule(interview_time);
+
+-- LLM Provider 配置表
+CREATE TABLE IF NOT EXISTS llm_provider_config (
+    id VARCHAR(64) PRIMARY KEY,
+    base_url VARCHAR(512) NOT NULL,
+    api_key_ciphertext VARCHAR(4096) NOT NULL,
+    api_key_nonce VARCHAR(64) NOT NULL,
+    model VARCHAR(128) NOT NULL,
+    embedding_model VARCHAR(128),
+    embedding_dimensions INTEGER,
+    supports_embedding BOOLEAN NOT NULL DEFAULT FALSE,
+    temperature DOUBLE PRECISION,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    builtin BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- LLM 全局设置表（单例）
+CREATE TABLE IF NOT EXISTS llm_global_setting (
+    id BIGINT PRIMARY KEY,
+    default_chat_provider_id VARCHAR(64) NOT NULL,
+    default_embedding_provider_id VARCHAR(64) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -1,7 +1,5 @@
-# Compiled class file
+# ========== Java / Maven ==========
 *.class
-
-# Package file
 *.jar
 *.war
 *.nar
@@ -10,7 +8,6 @@
 *.tar.gz
 *.rar
 
-# Maven
 target/
 pom.xml.tag
 pom.xml.releaseBackup
@@ -22,14 +19,14 @@ buildNumber.properties
 .mvn/timing.properties
 .mvn/wrapper/maven-wrapper.jar
 
-# Gradle
-.gradle
+# ========== Gradle ==========
+.gradle/
 build/
 !**/src/main/**/build/
 !**/src/test/**/build/
 
-# IDE
-.idea
+# ========== IDE ==========
+.idea/
 *.iml
 *.iws
 *.ipr
@@ -37,40 +34,44 @@ build/
 .settings/
 .project
 .classpath
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 
-# OS
+# ========== OS ==========
 .DS_Store
 Thumbs.db
 
-# Environment variables
+# ========== Environment ==========
 .env
 .env.local
 .env.*.local
-*.env
 
-# Logs
+# ========== Logs ==========
 *.log
 logs/
+app/logs/
 
-# Database
-*.db
-*.sqlite
+# ========== Frontend ==========
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
 
-# Temporary files
+# ========== Docker ==========
+docker-compose.override.yml
+
+# ========== Eval ==========
+eval/output/
+eval/.env
+
+# ========== Claude Code ==========
+.claude/
+
+# ========== Misc ==========
+txt/
 *.tmp
 *.temp
 *.swp
 *.swo
 *~
-
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-
-# Docker
-docker-compose.override.yml
-
-# Showcase
-PROJECT_SHOWCASE.md
-CODING_QUALITY_IMPROVEMENTS.md
