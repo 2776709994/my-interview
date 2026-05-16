@@ -19,6 +19,7 @@ declare global {
 
 interface AudioRecorderProps {
   isRecording: boolean;
+  disabled?: boolean;
   onRecordingChange: (isRecording: boolean) => void;
   onAudioData: (audioData: string) => void;
   onSpeechStart?: () => void;  // ✅ VAD callback
@@ -27,6 +28,7 @@ interface AudioRecorderProps {
 
 export default function AudioRecorder({
   isRecording,
+  disabled = false,
   onRecordingChange,
   onAudioData,
   onSpeechStart,
@@ -209,6 +211,9 @@ export default function AudioRecorder({
   }, []);
 
   const toggleRecording = () => {
+    if (disabled && !isRecording) {
+      return;
+    }
     if (isRecording) {
       stopRecording();
     } else {
@@ -233,15 +238,17 @@ export default function AudioRecorder({
       {/* Record button */}
       <button
         onClick={toggleRecording}
+        disabled={disabled && !isRecording}
         className={`
           relative z-10 w-16 h-16 rounded-full flex items-center justify-center
           transition-all duration-300 shadow-xl
+          ${disabled && !isRecording ? 'opacity-50 cursor-not-allowed shadow-none' : ''}
           ${isRecording
             ? 'bg-primary-500 hover:bg-primary-600 shadow-primary-500/40'
             : 'bg-slate-700 hover:bg-slate-600 shadow-slate-900/50'
           }
         `}
-        title={isRecording ? '停止录音' : '开始说话'}
+        title={disabled && !isRecording ? '语音识别准备中' : isRecording ? '停止录音' : '开始说话'}
       >
         {isRecording ? (
           <Mic className="w-7 h-7 text-white" />

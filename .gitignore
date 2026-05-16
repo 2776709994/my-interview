@@ -68,6 +68,9 @@ eval/.env
 # ========== Claude Code ==========
 .claude/
 
+# ========== Interview Prep ==========
+interview-prep/
+
 # ========== Misc ==========
 txt/
 *.tmp
@@ -75,3 +78,4 @@ txt/
 *.swp
 *.swo
 *~
+CODEBUDDY.md

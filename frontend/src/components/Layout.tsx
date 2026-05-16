@@ -1,6 +1,6 @@
 import {Link, Outlet, useLocation, useNavigate} from 'react-router-dom';
 import {motion} from 'framer-motion';
-import {Database, FileStack, MessageSquare, Moon, Settings, Sparkles, Sun, Users,} from 'lucide-react';
+import {CalendarDays, Database, FileStack, MessageSquare, Moon, Settings, Sparkles, Sun, Users,} from 'lucide-react';
 import {useTheme} from '../hooks/useTheme';
 import {useState} from 'react';
 import UnifiedInterviewModal, {UnifiedInterviewConfig} from './UnifiedInterviewModal';
@@ -44,6 +44,23 @@ export default function Layout() {
 
   const handleInterviewStart = (config: UnifiedInterviewConfig) => {
     setInterviewModalPreset(null);
+    if (config.mode === 'voice') {
+      navigate('/voice-interview', {
+        state: {
+          voiceConfig: {
+            skillId: config.skillId,
+            difficulty: config.difficulty,
+            techEnabled: true,
+            projectEnabled: true,
+            hrEnabled: true,
+            plannedDuration: config.plannedDuration,
+            resumeId: config.resumeId,
+            llmProvider: config.llmProvider,
+          },
+        },
+      });
+      return;
+    }
     if (config.mode === 'text') {
       navigate('/interview', {
         state: {
@@ -53,6 +70,9 @@ export default function Layout() {
             difficulty: config.difficulty,
             questionCount: config.questionCount,
             llmProvider: config.llmProvider,
+            jdText: config.customJdText,
+            customCategories: config.customCategories,
+            knowledgeBaseIds: config.knowledgeBaseIds,
           },
         },
       });
@@ -68,6 +88,7 @@ export default function Layout() {
         { id: 'resumes', path: '/history', label: '简历管理', icon: FileStack, description: '管理简历，AI 分析' },
         { id: 'interview-hub', path: '/interview-hub', label: '模拟面试', icon: Sparkles, description: '文字面试练习' },
         { id: 'interviews', path: '/interviews', label: '面试记录', icon: Users, description: '查看面试历史' },
+        { id: 'schedule', path: '/schedule', label: '面试日程', icon: CalendarDays, description: '管理面试时间安排' },
       ],
     },
     {

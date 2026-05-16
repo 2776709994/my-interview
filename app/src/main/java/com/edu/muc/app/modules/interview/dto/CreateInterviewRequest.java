@@ -14,6 +14,8 @@ public class CreateInterviewRequest {
     private String difficulty;
     private List<CategoryDTO> customCategories;
     private String jdText;
+    /** 关联的知识库 ID 列表（打通 RAG：出题时检索知识库内容作为参考） */
+    private List<Long> knowledgeBaseIds;
 
     @Data
     public static class CategoryDTO {

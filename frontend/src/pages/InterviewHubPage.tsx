@@ -15,6 +15,7 @@ import {
   CUSTOM_SKILL_ID,
   DIFFICULTY_OPTIONS,
 } from '../hooks/useInterviewConfig';
+import { JD_PRESETS } from '../constants/jdPresets';
 
 // 最近的面试记录项
 interface RecentInterviewItem {
@@ -35,7 +36,7 @@ export default function InterviewHubPage() {
   const [recentInterviews, setRecentInterviews] = useState<RecentInterviewItem[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
 
-  const loadRecentInterviews = useCallback(async (allSkills: SkillDTO[]) => {
+  const loadRecentInterviews = useCallback(async (_allSkills: SkillDTO[]) => {
     setLoadingRecent(true);
     try {
       const textSessions = await interviewApi.listSessions().catch(() => [] as TextSessionMeta[]);
@@ -87,6 +88,7 @@ export default function InterviewHubPage() {
           llmProvider: config.llmProvider,
           jdText: config.isCustomSkill ? config.parsedCustomJdText : undefined,
           customCategories: config.isCustomSkill ? config.customCategories : undefined,
+          knowledgeBaseIds: config.selectedKnowledgeBaseIds,
         },
       },
     });
@@ -202,10 +204,37 @@ export default function InterviewHubPage() {
                 className="overflow-hidden"
               >
                 <div className="space-y-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
+                  {/* 预设岗位 JD 模板 */}
+                  <div>
+                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+                      预设岗位模板（点击填充并自动解析，也可在下方自定义修改）
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {JD_PRESETS.map(preset => {
+                        const active = config.customJdText === preset.jdText;
+                        return (
+                          <button
+                            key={preset.id}
+                            onClick={() => config.applyJdPreset(preset.jdText)}
+                            disabled={config.parsingJd}
+                            title={preset.description}
+                            className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-all
+                              disabled:opacity-50 disabled:cursor-not-allowed
+                              ${active
+                                ? 'bg-primary-500 text-white border-primary-500 shadow-sm'
+                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400'
+                              }`}
+                          >
+                            {preset.title}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                   <textarea
                     value={config.customJdText}
                     onChange={e => config.setCustomJdText(e.target.value)}
-                    placeholder="粘贴目标岗位的职位描述（JD），至少 50 字..."
+                    placeholder="粘贴目标岗位的职位描述（JD），至少 50 字；或点击上方预设模板快速填充..."
                     rows={4}
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700
                       bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white
@@ -342,7 +371,7 @@ export default function InterviewHubPage() {
         </div>
 
         {/* 开始面试按钮 */}
-        <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-700">
+        <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-700 space-y-3">
           <motion.button
             onClick={handleStart}
             whileHover={{ scale: 1.01 }}
@@ -352,7 +381,32 @@ export default function InterviewHubPage() {
               bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700
               text-white shadow-lg shadow-primary-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            开始面试
+            开始文字面试
+          </motion.button>
+          <motion.button
+            onClick={() => {
+              navigate('/voice-interview', {
+                state: {
+                  voiceConfig: {
+                    skillId: config.skillId,
+                    difficulty: config.difficulty,
+                    techEnabled: true,
+                    projectEnabled: true,
+                    hrEnabled: true,
+                    plannedDuration: config.plannedDuration,
+                    resumeId: config.resumeId,
+                    llmProvider: config.llmProvider,
+                  },
+                },
+              });
+            }}
+            whileHover={{ scale: 1.01 }}
+            whileTap={{ scale: 0.99 }}
+            className="w-full px-6 py-3 rounded-xl font-semibold text-sm transition-all
+              bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700
+              text-white shadow-lg shadow-indigo-500/25"
+          >
+            开始语音面试
           </motion.button>
         </div>
       </motion.div>

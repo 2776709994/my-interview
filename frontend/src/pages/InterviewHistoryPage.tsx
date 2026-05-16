@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { historyApi } from '../api/history';
 import { interviewApi, type TextSessionMeta } from '../api/interview';
+import { voiceInterviewApi, type SessionMeta as VoiceSessionMeta } from '../api/voiceInterview';
 import { formatDate } from '../utils/date';
 import { getScoreProgressColor } from '../utils/score';
 import DeleteConfirmDialog from '../components/DeleteConfirmDialog';
@@ -14,6 +15,7 @@ import {
   Download,
   FileText,
   Loader2,
+  Mic,
   PlayCircle,
   RefreshCw,
   Search,
@@ -31,6 +33,7 @@ interface UnifiedInterviewItem {
   totalQuestions?: number;
   createdAt: string;
   resumeId?: number;
+  type: 'text' | 'voice';
 }
 
 function isCompletedStatus(status: string): boolean {
@@ -55,7 +58,7 @@ function StatusIcon({ item }: { item: UnifiedInterviewItem }) {
   if (isEvaluateFailed(item)) return <AlertCircle className="w-4 h-4 text-red-500 dark:text-red-400"/>;
   if (isEvaluating(item)) return <RefreshCw className="w-4 h-4 text-blue-500 dark:text-blue-400 animate-spin"/>;
   if (isEvaluateCompleted(item)) return <CheckCircle className="w-4 h-4 text-green-500 dark:text-green-400"/>;
-  if (item.status === 'IN_PROGRESS') return <PlayCircle className="w-4 h-4 text-blue-500 dark:text-blue-400"/>;
+  if (item.status === 'IN_PROGRESS' || item.status === 'PAUSED') return <PlayCircle className="w-4 h-4 text-blue-500 dark:text-blue-400"/>;
   return <Clock className="w-4 h-4 text-yellow-500 dark:text-yellow-400"/>;
 }
 
@@ -63,13 +66,24 @@ function getStatusText(item: UnifiedInterviewItem): string {
   if (isEvaluateFailed(item)) return '评估失败';
   if (isEvaluating(item)) return item.evaluateStatus === 'PROCESSING' ? '评估中' : '等待评估';
   if (isEvaluateCompleted(item)) return '已完成';
+  if (item.status === 'PAUSED') return '已暂停';
   if (item.status === 'IN_PROGRESS') return '进行中';
   if (isCompletedStatus(item.status)) return '已提交';
   return '已创建';
 }
 
-export default function InterviewHistoryPage() {
+type TabKey = 'text' | 'voice';
+
+interface InterviewHistoryPageProps {
+  onBack?: () => void;
+  onViewInterview?: (sessionId: string, _resumeId?: number) => void;
+  onRestartInterview?: (resumeId: number) => void;
+  onContinueInterview?: (sessionId: string) => void;
+}
+
+export default function InterviewHistoryPage({}: InterviewHistoryPageProps) {
   const navigate = useNavigate();
+  const [tab, setTab] = useState<TabKey>('text');
   const [items, setItems] = useState<UnifiedInterviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -79,13 +93,14 @@ export default function InterviewHistoryPage() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const textSessions = await interviewApi.listSessions().catch(() => [] as TextSessionMeta[]);
-      
-      // 确保 textSessions 是数组
-      const safeSessions = Array.isArray(textSessions) ? textSessions : [];
-      
-      const mappedItems: UnifiedInterviewItem[] = safeSessions.map(s => ({
-        id: s.sessionId,
+      const [textSessions, voiceSessions] = await Promise.all([
+        interviewApi.listSessions().catch(() => [] as TextSessionMeta[]),
+        voiceInterviewApi.getAllSessions().catch(() => [] as VoiceSessionMeta[]),
+      ]);
+
+      const safeTextSessions = Array.isArray(textSessions) ? textSessions : [];
+      const textItems: UnifiedInterviewItem[] = safeTextSessions.map(s => ({
+        id: `text-${s.sessionId}`,
         title: s.skillId || '未知方向',
         sessionId: s.sessionId,
         status: s.status,
@@ -95,10 +110,26 @@ export default function InterviewHistoryPage() {
         totalQuestions: s.totalQuestions,
         createdAt: s.createdAt,
         resumeId: s.resumeId || undefined,
+        type: 'text',
       }));
 
-      mappedItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      setItems(mappedItems);
+      const safeVoiceSessions = Array.isArray(voiceSessions) ? voiceSessions : [];
+      const voiceItems: UnifiedInterviewItem[] = safeVoiceSessions.map(s => ({
+        id: `voice-${s.sessionId}`,
+        title: s.roleType || '语音面试',
+        sessionId: String(s.sessionId),
+        status: s.status,
+        evaluateStatus: s.evaluateStatus || undefined,
+        evaluateError: s.evaluateError || undefined,
+        overallScore: null,
+        totalQuestions: s.messageCount || undefined,
+        createdAt: s.createdAt,
+        type: 'voice',
+      }));
+
+      const merged = [...textItems, ...voiceItems];
+      merged.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setItems(merged);
     } catch (err) {
       console.error('Failed to load interviews:', err);
     } finally {
@@ -127,11 +158,13 @@ export default function InterviewHistoryPage() {
 
   const handleDelete = async () => {
     if (!deleteItem) return;
-    
+
     try {
-      console.log('🗑️ 开始删除会话:', deleteItem.sessionId);
-      await interviewApi.deleteSession(deleteItem.sessionId);
-      console.log('✅ 删除成功');
+      if (deleteItem.type === 'voice') {
+        await voiceInterviewApi.deleteSession(parseInt(deleteItem.sessionId));
+      } else {
+        await interviewApi.deleteSession(deleteItem.sessionId);
+      }
       setItems(prev => prev.filter(item => item.id !== deleteItem.id));
       setDeleteItem(null);
     } catch (err: any) {
@@ -161,7 +194,24 @@ export default function InterviewHistoryPage() {
     }
   };
 
+  const handleItemClick = (item: UnifiedInterviewItem) => {
+    if (item.type === 'voice') {
+      navigate(`/voice-interview/${item.sessionId}/evaluation`);
+    } else {
+      navigate(`/interviews/${item.sessionId}`);
+    }
+  };
+
+  const handleContinue = (item: UnifiedInterviewItem) => {
+    if (item.type === 'voice') {
+      navigate('/voice-interview', {
+        state: { voiceSessionId: parseInt(item.sessionId) },
+      });
+    }
+  };
+
   const filteredItems = items.filter(item => {
+    if (item.type !== tab) return false;
     if (searchTerm && !item.title.toLowerCase().includes(searchTerm.toLowerCase())) {
       return false;
     }
@@ -177,6 +227,32 @@ export default function InterviewHistoryPage() {
           面试记录
         </h1>
         <p className="text-slate-500 dark:text-slate-400 mt-1">查看和管理所有面试会话</p>
+      </div>
+
+      {/* 类型切换 */}
+      <div className="mb-6 inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1 border border-slate-200 dark:border-slate-700">
+        <button
+          onClick={() => setTab('text')}
+          className={`px-5 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+            tab === 'text'
+              ? 'bg-white dark:bg-slate-700 text-primary-600 dark:text-primary-300 shadow-sm'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          文字面试
+        </button>
+        <button
+          onClick={() => setTab('voice')}
+          className={`px-5 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+            tab === 'voice'
+              ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 shadow-sm'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+          }`}
+        >
+          <Mic className="w-4 h-4" />
+          语音面试
+        </button>
       </div>
 
       {/* 搜索框 */}
@@ -202,8 +278,14 @@ export default function InterviewHistoryPage() {
         </div>
       ) : filteredItems.length === 0 ? (
         <div className="text-center py-20">
-          <FileText className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
-          <p className="text-slate-500 dark:text-slate-400">暂无面试记录</p>
+          {tab === 'voice' ? (
+            <Mic className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
+          ) : (
+            <FileText className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
+          )}
+          <p className="text-slate-500 dark:text-slate-400">
+            {tab === 'voice' ? '暂无语音面试记录' : '暂无文字面试记录'}
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -213,13 +295,17 @@ export default function InterviewHistoryPage() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.05 }}
-              onClick={() => navigate(`/interviews/${item.sessionId}`)}
+              onClick={() => handleItemClick(item)}
               className="bg-white dark:bg-slate-800 rounded-xl p-5 shadow-sm border border-slate-100 dark:border-slate-700
                 hover:shadow-md hover:border-primary-200 dark:hover:border-primary-800 transition-all cursor-pointer group"
             >
               <div className="flex items-center gap-4">
                 {/* 状态图标 */}
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 bg-blue-100 dark:bg-blue-900/30">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  item.type === 'voice'
+                    ? 'bg-indigo-100 dark:bg-indigo-900/30'
+                    : 'bg-blue-100 dark:bg-blue-900/30'
+                }`}>
                   <StatusIcon item={item} />
                 </div>
 
@@ -227,13 +313,17 @@ export default function InterviewHistoryPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-semibold text-slate-800 dark:text-white truncate">{item.title}</span>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400">
-                      文字面试
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                      item.type === 'voice'
+                        ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'
+                        : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                    }`}>
+                      {item.type === 'voice' ? '语音面试' : '文字面试'}
                     </span>
                   </div>
                   <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400">
                     <span>{formatDate(item.createdAt)}</span>
-                    {item.totalQuestions && <span>{item.totalQuestions} 题</span>}
+                    {item.totalQuestions && <span>{item.totalQuestions} 轮</span>}
                     {isEvaluating(item) && (
                       <span className="flex items-center gap-1 text-blue-500">
                         <RefreshCw className="w-3 h-3 animate-spin" /> {getStatusText(item)}
@@ -244,12 +334,15 @@ export default function InterviewHistoryPage() {
                         得分 <span className={`font-bold ${getScoreProgressColor(item.overallScore!)}`}>{item.overallScore}</span>
                       </span>
                     )}
+                    {(item.status === 'IN_PROGRESS' || item.status === 'PAUSED') && (
+                      <span className="text-amber-500">{getStatusText(item)}</span>
+                    )}
                   </div>
                 </div>
 
                 {/* 操作按钮 */}
                 <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {isEvaluateCompleted(item) && (
+                  {item.type === 'text' && isEvaluateCompleted(item) && (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -264,6 +357,18 @@ export default function InterviewHistoryPage() {
                       ) : (
                         <Download className="w-4 h-4 text-slate-500" />
                       )}
+                    </button>
+                  )}
+                  {(item.status === 'IN_PROGRESS' || item.status === 'PAUSED') && item.type === 'voice' && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleContinue(item);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400 text-xs font-medium hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
+                      title="继续面试"
+                    >
+                      继续面试
                     </button>
                   )}
                   <button

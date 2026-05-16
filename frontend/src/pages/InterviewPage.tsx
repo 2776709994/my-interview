@@ -27,6 +27,7 @@ interface InterviewProps {
     difficulty?: Difficulty;
     customCategories?: CategoryDTO[];
     jdText?: string;
+    knowledgeBaseIds?: number[];
   };
   onBack: () => void;
   onInterviewComplete: () => void;
@@ -56,6 +57,7 @@ export default function Interview({
   const difficulty = initialConfig?.difficulty ?? 'mid';
   const customCategories = initialConfig?.customCategories;
   const jdText = initialConfig?.jdText;
+  const knowledgeBaseIds = initialConfig?.knowledgeBaseIds;
 
   // 自动开始面试（恢复已有会话 或 创建新会话）
   useEffect(() => {
@@ -84,7 +86,10 @@ export default function Interview({
         skillId,
         difficulty,
         customCategories: skillId === CUSTOM_SKILL_ID ? customCategories : undefined,
-        jdText: skillId === CUSTOM_SKILL_ID ? jdText : undefined,
+        // 只要用户选定了 JD（预设或自定义）就传给后端，作为面试出题的上下文依据
+        jdText: jdText || undefined,
+        // RAG 打通：关联的知识库 ID，后端出题时检索知识库内容作为参考
+        knowledgeBaseIds,
       });
 
       initSession(newSession);

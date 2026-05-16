@@ -2,11 +2,19 @@
 
 import React from 'react';
 import { motion } from 'framer-motion';
-import type { InterviewSchedule } from '../../types/interviewSchedule';
+import dayjs from 'dayjs';
+import type { InterviewSchedule, InterviewStatus } from '../../types/interviewSchedule';
 
 interface InterviewEventProps {
   event: InterviewSchedule;
 }
+
+const statusLabels: Record<InterviewStatus, string> = {
+  PENDING: '待面试',
+  COMPLETED: '已完成',
+  CANCELLED: '已取消',
+  RESCHEDULED: '已改期',
+};
 
 export const InterviewEvent: React.FC<InterviewEventProps> = ({ event }) => {
   const statusConfig = {
@@ -45,6 +53,14 @@ export const InterviewEvent: React.FC<InterviewEventProps> = ({ event }) => {
       whileHover={{ scale: 1.02 }}
       className={`p-1.5 rounded-lg ${config.bg} ${config.text} border ${config.border} shadow-md ${config.shadow} backdrop-blur-sm h-full overflow-hidden`}
     >
+      <div className="flex items-center justify-between gap-1 mb-0.5">
+        <span className="text-[10px] font-bold leading-tight tabular-nums">
+          {dayjs(event.interviewTime).format('HH:mm')}
+        </span>
+        <span className="px-1 py-px rounded text-[9px] font-semibold leading-tight bg-white/60 dark:bg-black/25">
+          {statusLabels[event.status]}
+        </span>
+      </div>
       <div className="font-display font-semibold text-xs leading-tight mb-0.5 break-words">{event.companyName}</div>
       <div className="text-xs opacity-90 font-medium leading-tight break-words">{event.position}</div>
       {event.roundNumber > 1 && (

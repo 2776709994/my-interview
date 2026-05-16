@@ -80,3 +80,29 @@ rag:
     top-k: 15
     final-top-k: 5
     similarity-threshold: 0.3
+
+# 语音面试配置（ASR/TTS 共用阿里云百炼 API Key）
+app:
+  voice-interview:
+    llm-streaming-enabled: true
+    chunked-audio-enabled: true
+    max-concurrent-tts-per-session: 3
+    qwen:
+      asr:
+        url: wss://dashscope.aliyuncs.com/api-ws/v1/realtime
+        model: ${AI_ASR_MODEL:qwen-audio-3.0-asr-flash-streaming}
+        api-key: ${DASHSCOPE_API_KEY:}
+        language: zh
+        format: pcm
+        sample-rate: 16000
+        enable-turn-detection: true
+        turn-detection-type: server_vad
+        turn-detection-silence-duration-ms: 400
+      tts:
+        model: ${AI_TTS_MODEL:qwen3-tts-flash-realtime}
+        api-key: ${DASHSCOPE_API_KEY:}
+        voice: ${AI_TTS_VOICE:Cherry}
+        format: pcm
+        sample-rate: 24000
+        mode: commit
+        language-type: Chinese

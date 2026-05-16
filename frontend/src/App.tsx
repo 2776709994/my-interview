@@ -17,9 +17,9 @@ const InterviewHistoryPage = lazy(() => import('./pages/InterviewHistoryPage'));
 const KnowledgeBaseQueryPage = lazy(() => import('./pages/KnowledgeBaseQueryPage'));
 const KnowledgeBaseUploadPage = lazy(() => import('./pages/KnowledgeBaseUploadPage'));
 const KnowledgeBaseManagePage = lazy(() => import('./pages/KnowledgeBaseManagePage'));
-// const VoiceInterviewPage = lazy(() => import('./pages/VoiceInterviewPage'));
-// const VoiceInterviewEvaluationPage = lazy(() => import('./pages/VoiceInterviewEvaluationPage'));
-// const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage'));
+const VoiceInterviewPage = lazy(() => import('./pages/VoiceInterviewPage'));
+const VoiceInterviewEvaluationPage = lazy(() => import('./pages/VoiceInterviewEvaluationPage'));
+const InterviewSchedulePage = lazy(() => import('./pages/InterviewSchedulePage'));
 const InterviewHubPage = lazy(() => import('./pages/InterviewHubPage'));
 const InterviewDetailPanel = lazy(() => import('./components/InterviewDetailPanel'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
@@ -184,6 +184,9 @@ function App() {
             {/* 面试中心 */}
             <Route path="interview-hub" element={<InterviewHubPage />} />
 
+            {/* 面试日程 */}
+            <Route path="schedule" element={<InterviewSchedulePage />} />
+
             {/* 面试记录列表 */}
             <Route path="interviews" element={<InterviewHistoryWrapper />} />
 
@@ -195,6 +198,12 @@ function App() {
 
             {/* 模拟面试 */}
             <Route path="interview/:resumeId" element={<InterviewWrapper />} />
+
+            {/* 语音面试（实时语音对话） */}
+            <Route path="voice-interview" element={<VoiceInterviewWrapper />} />
+
+            {/* 语音面试评估报告 */}
+            <Route path="voice-interview/:sessionId/evaluation" element={<VoiceInterviewEvaluationPage />} />
 
             {/* 知识库管理 */}
             <Route path="knowledgebase" element={<KnowledgeBaseManagePageWrapper />} />
@@ -213,6 +222,11 @@ function App() {
       </Suspense>
     </BrowserRouter>
   );
+}
+
+// 语音面试页面包装器
+function VoiceInterviewWrapper() {
+  return <VoiceInterviewPage />;
 }
 
 // 面试记录页面包装器

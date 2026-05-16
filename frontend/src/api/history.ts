@@ -116,6 +116,8 @@ export interface InterviewDetail {
   referenceAnswers: ReferenceAnswerDTO[];
   evaluateStatus?: EvaluateStatus;
   evaluateError?: string;
+  completedAt?: string;
+  createdAt?: string;
 }
 
 export const historyApi = {

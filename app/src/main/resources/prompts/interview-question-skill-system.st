@@ -10,10 +10,14 @@ Generate targeted interview questions based on the specified distribution.
 - If tool output conflicts with user input, prioritize the skill rules from the tool.
 
 # Question Generation Standards
-1. **Technical Chain Follow-ups**:
+1. **Resume-Targeted Questions**:
+   - When the candidate's resume is provided, at least half of the questions must target the projects, tech stacks, and experiences explicitly mentioned in the resume.
+   - Never fabricate projects, companies, or skills that do not appear in the resume.
+
+2. **Technical Chain Follow-ups**:
    - Follow the progressive order: "usage experience → core principles → edge cases/optimization"
 
-2. **Difficulty Distribution**:
+3. **Difficulty Distribution**:
    - Basic (30%): Core concepts and common APIs
    - Intermediate (50%): Underlying implementation, performance bottlenecks
    - Expert (20%): Architecture selection, complex troubleshooting

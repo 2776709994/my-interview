@@ -31,6 +31,8 @@ export interface CreateInterviewRequest {
   difficulty?: string;
   customCategories?: CategoryDTO[];
   jdText?: string;
+  /** 关联的知识库 ID 列表（RAG 打通：出题时检索知识库内容作为参考） */
+  knowledgeBaseIds?: number[];
 }
 
 export interface SubmitAnswerRequest {

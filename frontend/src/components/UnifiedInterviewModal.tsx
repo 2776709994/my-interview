@@ -2,10 +2,11 @@ import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   X, Sparkles, FileText, Mic,
-  FileStack, ChevronDown, ChevronUp, Loader2
+  FileStack, Database, ChevronDown, ChevronUp, Loader2
 } from 'lucide-react';
 import { useInterviewConfig, CUSTOM_SKILL_ID, DIFFICULTY_OPTIONS, type InterviewMode, type Difficulty } from '../hooks/useInterviewConfig';
 import { getSkillIcon } from '../utils/skillIcons';
+import { JD_PRESETS } from '../constants/jdPresets';
 
 // Re-export for backward compatibility
 export type { InterviewMode, Difficulty };
@@ -26,6 +27,7 @@ export interface UnifiedInterviewConfig {
   plannedDuration: number;
   customJdText?: string;
   customCategories?: import('../api/skill').CategoryDTO[];
+  knowledgeBaseIds?: number[];
 }
 
 interface UnifiedInterviewModalProps {
@@ -62,6 +64,7 @@ export default function UnifiedInterviewModal({
       }
       config.loadSkills();
       config.loadResumes();
+      config.loadKnowledgeBases();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, defaultMode, defaultResumeId]);
@@ -87,6 +90,7 @@ export default function UnifiedInterviewModal({
       plannedDuration: config.plannedDuration,
       customJdText: config.isCustomSkill ? config.parsedCustomJdText : undefined,
       customCategories: config.isCustomSkill ? config.customCategories : undefined,
+      knowledgeBaseIds: config.selectedKnowledgeBaseIds,
     });
   };
 
@@ -275,10 +279,37 @@ export default function UnifiedInterviewModal({
                       className="overflow-hidden"
                     >
                       <div className="space-y-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
+                        {/* 预设岗位 JD 模板 */}
+                        <div>
+                          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">
+                            预设岗位模板（点击填充并自动解析，也可自定义修改）
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {JD_PRESETS.map(preset => {
+                              const active = config.customJdText === preset.jdText;
+                              return (
+                                <button
+                                  key={preset.id}
+                                  onClick={() => config.applyJdPreset(preset.jdText)}
+                                  disabled={config.parsingJd}
+                                  title={preset.description}
+                                  className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-all
+                                    disabled:opacity-50 disabled:cursor-not-allowed
+                                    ${active
+                                      ? 'bg-primary-500 text-white border-primary-500 shadow-sm'
+                                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-primary-400 hover:text-primary-600 dark:hover:text-primary-400'
+                                    }`}
+                                >
+                                  {preset.title}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                         <textarea
                           value={config.customJdText}
                           onChange={e => config.setCustomJdText(e.target.value)}
-                          placeholder="粘贴目标岗位的职位描述（JD），至少 50 字..."
+                          placeholder="粘贴目标岗位的职位描述（JD），至少 50 字；或点击上方预设模板快速填充..."
                           rows={4}
                           className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700
                             bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white
@@ -385,6 +416,45 @@ export default function UnifiedInterviewModal({
                           ))}
                         </select>
                       </div>
+
+                      {/* 知识库参考（RAG 打通） */}
+                      {config.mode === 'text' && (
+                        <div className="bg-gradient-to-br from-emerald-50/80 to-teal-50/80 dark:from-emerald-900/20 dark:to-teal-900/10 rounded-xl p-4 border border-emerald-100 dark:border-emerald-800/30">
+                          <div className="flex items-center gap-3 mb-1">
+                            <Database className="w-5 h-5 text-emerald-500" />
+                            <p className="font-semibold text-sm text-emerald-900 dark:text-emerald-100">
+                              知识库出题参考（可选）
+                            </p>
+                          </div>
+                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-3">
+                            选择知识库后，出题时将检索其中内容作为出题依据，让面试更贴合你的知识库资料
+                          </p>
+                          {config.knowledgeBases.length === 0 ? (
+                            <p className="text-xs text-slate-400 dark:text-slate-500 py-1">
+                              暂无已完成向量化的知识库，可前往「知识库管理」上传
+                            </p>
+                          ) : (
+                            <div className="flex flex-wrap gap-2 max-h-36 overflow-y-auto">
+                              {config.knowledgeBases.map(kb => {
+                                const selected = config.selectedKnowledgeBaseIds.includes(kb.id);
+                                return (
+                                  <button
+                                    key={kb.id}
+                                    onClick={() => config.toggleKnowledgeBase(kb.id)}
+                                    className={`px-3 py-1.5 text-xs font-medium rounded-full border transition-all
+                                      ${selected
+                                        ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm'
+                                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:border-emerald-400 hover:text-emerald-600 dark:hover:text-emerald-400'
+                                      }`}
+                                  >
+                                    {kb.name}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* 文字面试 - 题目数 */}
                       {config.mode === 'text' && (

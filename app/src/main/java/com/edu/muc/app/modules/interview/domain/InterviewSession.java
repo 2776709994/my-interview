@@ -19,6 +19,9 @@ public class InterviewSession {
 
     private String jdText;
 
+    /** 关联的知识库 ID 列表（JSON 数组字符串），用于 RAG 打通 */
+    private String knowledgeBaseIds;
+
     private String skillId;
 
     private String difficulty;

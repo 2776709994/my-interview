@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { skillApi, type SkillDTO, type CategoryDTO } from '../api/skill';
 import { historyApi, type ResumeListItem } from '../api/history';
+import { knowledgeBaseApi, type KnowledgeBaseItem } from '../api/knowledgebase';
 import { getSkillIcon } from '../utils/skillIcons';
 import { loadInterviewPreferences } from '../utils/interviewPreferences';
 
@@ -36,6 +37,8 @@ export interface InterviewConfigState {
   parsingJd: boolean;
   jdNeedsReparse: boolean;
   isCustomStartDisabled: boolean;
+  knowledgeBases: KnowledgeBaseItem[];
+  selectedKnowledgeBaseIds: number[];
 }
 
 export function useInterviewConfig(options?: {
@@ -61,6 +64,8 @@ export function useInterviewConfig(options?: {
   const [parsedCustomJdText, setParsedCustomJdText] = useState('');
   const [customCategories, setCustomCategories] = useState<CategoryDTO[]>([]);
   const [parsingJd, setParsingJd] = useState(false);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
+  const [selectedKnowledgeBaseIds, setSelectedKnowledgeBaseIds] = useState<number[]>([]);
 
   const isCustomSkill = skillId === CUSTOM_SKILL_ID;
   const jdNeedsReparse = parsedCustomJdText.length > 0 && customJdText !== parsedCustomJdText;
@@ -90,21 +95,47 @@ export function useInterviewConfig(options?: {
     }
   };
 
-  const handleParseJd = async () => {
-    if (!customJdText || customJdText.length < MIN_JD_LENGTH) {
-      alert(`JD 内容太少（至少 ${MIN_JD_LENGTH} 字），请补充后重试`);
-      return;
+  const loadKnowledgeBases = async () => {
+    try {
+      const data = await knowledgeBaseApi.getAllKnowledgeBases(undefined, 'COMPLETED');
+      setKnowledgeBases(data);
+    } catch (err) {
+      console.error('Failed to load knowledge bases:', err);
     }
+  };
+
+  const toggleKnowledgeBase = (kbId: number) => {
+    setSelectedKnowledgeBaseIds(prev =>
+      prev.includes(kbId) ? prev.filter(id => id !== kbId) : [...prev, kbId]
+    );
+  };
+
+  const parseJdText = async (jdText: string) => {
     setParsingJd(true);
     try {
-      const categories = await skillApi.parseJd(customJdText);
+      const categories = await skillApi.parseJd(jdText);
       setCustomCategories(categories);
-      setParsedCustomJdText(customJdText);
+      setParsedCustomJdText(jdText);
     } catch {
       alert('JD 解析失败，请重试或选择预设主题');
     } finally {
       setParsingJd(false);
     }
+  };
+
+  const handleParseJd = async () => {
+    if (!customJdText || customJdText.length < MIN_JD_LENGTH) {
+      alert(`JD 内容太少（至少 ${MIN_JD_LENGTH} 字），请补充后重试`);
+      return;
+    }
+    await parseJdText(customJdText);
+  };
+
+  // 应用预设 JD 模板：填充输入框并立即解析面试方向
+  const applyJdPreset = async (jdText: string) => {
+    setCustomJdText(jdText);
+    setCustomCategories([]);
+    await parseJdText(jdText);
   };
 
   useEffect(() => {
@@ -116,6 +147,7 @@ export function useInterviewConfig(options?: {
       }
       loadSkills();
       loadResumes();
+      loadKnowledgeBases();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLoad, defaultMode, defaultResumeId]);
@@ -140,10 +172,15 @@ export function useInterviewConfig(options?: {
     jdNeedsReparse,
     isCustomStartDisabled,
     isCustomSkill,
+    knowledgeBases,
+    selectedKnowledgeBaseIds,
     // Actions
     loadSkills,
     loadResumes,
+    loadKnowledgeBases,
+    toggleKnowledgeBase,
     handleParseJd,
+    applyJdPreset,
     // Helpers
     getSkillIcon,
     get selectedSkill() { return skills.find(s => s.id === skillId); },

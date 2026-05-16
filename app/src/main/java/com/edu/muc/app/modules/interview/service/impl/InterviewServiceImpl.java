@@ -2,6 +2,7 @@ package com.edu.muc.app.modules.interview.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.edu.muc.app.common.JsonUtils;
+import com.edu.muc.app.common.ai.LlmProviderRegistry;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
 import com.edu.muc.app.modules.interview.domain.InterviewAnswer;
@@ -14,11 +15,17 @@ import com.edu.muc.app.modules.interview.mapper.InterviewAnswerMapper;
 import com.edu.muc.app.modules.interview.mapper.InterviewQuestionMapper;
 import com.edu.muc.app.modules.interview.mapper.InterviewSessionMapper;
 import com.edu.muc.app.modules.interview.service.InterviewService;
+import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
+import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
+import com.edu.muc.app.modules.resume.domain.Resumes;
+import com.edu.muc.app.modules.resume.mapper.ResumesMapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,19 +41,26 @@ import java.util.stream.Collectors;
 public class InterviewServiceImpl implements InterviewService {
 
     private static final int DEFAULT_FOLLOW_UP_COUNT = 2;
-    
+    private static final int MAX_RESUME_TEXT_LENGTH = 6000;
+
     private final InterviewSessionMapper sessionMapper;
     private final InterviewQuestionMapper questionMapper;
     private final InterviewAnswerMapper answerMapper;
     private final ChatClient chatClient;
     private final RedisStreamProducer streamProducer;
+    private final ResumesMapper resumesMapper;
+    private final LlmProviderRegistry llmProviderRegistry;
+    private final SmartRetrievalService smartRetrievalService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     @Transactional
     public InterviewSessionDTO createSession(CreateInterviewRequest request) {
-        log.info("🎯 创建面试会话: skillId={}, difficulty={}, questionCount={}", 
+        log.info("🎯 创建面试会话: skillId={}, difficulty={}, questionCount={}",
                 request.getSkillId(), request.getDifficulty(), request.getQuestionCount());
+
+        // 0. 若只传了 resumeId 而未传简历文本，则从数据库回查简历内容，确保面试官能基于简历提问
+        enrichResumeText(request);
 
         // 1. 检查是否有未完成的会话
         if (request.getResumeId() != null && !Boolean.TRUE.equals(request.getForceCreate())) {
@@ -79,6 +93,7 @@ public class InterviewServiceImpl implements InterviewService {
         session.setResumeId(request.getResumeId());
         session.setResumeText(request.getResumeText());
         session.setJdText(request.getJdText());
+        session.setKnowledgeBaseIds(serializeKnowledgeBaseIds(request.getKnowledgeBaseIds()));
         session.setSkillId(request.getSkillId());
         session.setDifficulty(request.getDifficulty());
         session.setTotalQuestions(request.getQuestionCount());
@@ -96,6 +111,28 @@ public class InterviewServiceImpl implements InterviewService {
         log.info("✅ 会话创建成功: {}", sessionId);
 
         return convertToDTO(session);
+    }
+
+    /**
+     * 若请求中只有 resumeId 而没有简历文本，则从数据库回查简历内容；
+     * 同时截断过长的简历文本，避免超出模型上下文窗口。
+     */
+    private void enrichResumeText(CreateInterviewRequest request) {
+        String resumeText = request.getResumeText();
+        if ((resumeText == null || resumeText.isBlank()) && request.getResumeId() != null) {
+            Resumes resume = resumesMapper.selectById(request.getResumeId());
+            if (resume != null && resume.getResumeText() != null && !resume.getResumeText().isBlank()) {
+                resumeText = resume.getResumeText();
+                log.info("✅ 已根据 resumeId={} 回查简历内容，长度: {}", request.getResumeId(), resumeText.length());
+            } else {
+                log.warn("⚠️ 无法获取简历内容（简历不存在或尚未完成解析）: resumeId={}", request.getResumeId());
+            }
+        }
+        if (resumeText != null && resumeText.length() > MAX_RESUME_TEXT_LENGTH) {
+            log.info("✂️ 简历文本过长（{} 字），截断至 {} 字", resumeText.length(), MAX_RESUME_TEXT_LENGTH);
+            resumeText = resumeText.substring(0, MAX_RESUME_TEXT_LENGTH);
+        }
+        request.setResumeText(resumeText);
     }
 
     /**
@@ -128,13 +165,19 @@ public class InterviewServiceImpl implements InterviewService {
                     request.getQuestionCount() - (int) Math.ceil(request.getQuestionCount() * 0.5) - (int) Math.ceil(request.getQuestionCount() * 0.3)
             );
             
-            // 构建参考题库（空）
-            String referenceSection = "无";
+            // 构建参考题库：若关联了知识库，则通过向量检索知识库内容作为出题参考（RAG 打通）
+            String referenceSection = buildReferenceSection(request);
             
             // 构建 JD 部分
-            String jdSection = request.getJdText() != null && !request.getJdText().isEmpty() 
-                    ? request.getJdText() 
+            String jdSection = request.getJdText() != null && !request.getJdText().isEmpty()
+                    ? request.getJdText()
                     : "无特定职位要求";
+
+            // 构建候选人简历部分（有简历时，面试官需结合简历中的项目与技能针对性提问）
+            String resumeText = request.getResumeText();
+            String resumeSection = (resumeText != null && !resumeText.isBlank())
+                    ? "---简历内容开始---\n" + resumeText + "\n---简历内容结束---"
+                    : "未提供简历，请依据面试方向与职位描述按通用标准提问。";
             
             // 构建 Skill Tool 指令
             String skillToolCommand = String.format("读取技能：%s", request.getSkillId());
@@ -164,7 +207,8 @@ public class InterviewServiceImpl implements InterviewService {
             userVars.put("allocationTable", allocationTable);
             userVars.put("referenceSection", referenceSection);
             userVars.put("jdSection", jdSection);
-            
+            userVars.put("resumeSection", resumeSection);
+
             String userPrompt = userTemplate.render(userVars);
 
             log.info("🤖 调用 AI 生成问题...");
@@ -281,6 +325,68 @@ public class InterviewServiceImpl implements InterviewService {
         }
         
         return questions;
+    }
+
+    /**
+     * RAG 打通：若请求指定了知识库，则向量化查询文本并从知识库检索相关片段，作为出题参考题库。
+     * 检索失败时静默降级为"无参考题库"，不影响出题主流程。
+     */
+    private String buildReferenceSection(CreateInterviewRequest request) {
+        List<Long> knowledgeBaseIds = request.getKnowledgeBaseIds();
+        if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
+            return "无";
+        }
+        try {
+            String queryText = buildRagQueryText(request);
+            if (queryText.isBlank()) {
+                return "无";
+            }
+            EmbeddingModel embeddingModel = llmProviderRegistry.getDefaultEmbeddingModel();
+            float[] queryEmbedding = embeddingModel.embed(queryText);
+            String queryVector = JsonUtils.convertEmbeddingToJson(queryEmbedding);
+
+            List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(queryVector, knowledgeBaseIds);
+            if (docs.isEmpty()) {
+                log.info("📚 RAG 出题：知识库 {} 未检索到相关内容", knowledgeBaseIds);
+                return "无";
+            }
+            String reference = docs.stream()
+                    .map(doc -> "【" + (doc.getName() != null ? doc.getName() : "知识库资料") + "】\n" + doc.getContent())
+                    .collect(Collectors.joining("\n\n"));
+            log.info("📚 RAG 出题：从知识库 {} 检索到 {} 个片段作为出题参考", knowledgeBaseIds, docs.size());
+            return reference;
+        } catch (Exception e) {
+            log.warn("📚 RAG 出题检索失败，降级为无参考题库: {}", e.getMessage());
+            return "无";
+        }
+    }
+
+    private String buildRagQueryText(CreateInterviewRequest request) {
+        StringBuilder sb = new StringBuilder();
+        String resumeText = request.getResumeText();
+        if (resumeText != null && !resumeText.isBlank()) {
+            sb.append(resumeText);
+        }
+        String jdText = request.getJdText();
+        if (jdText != null && !jdText.isBlank()) {
+            sb.append('\n').append(jdText);
+        }
+        if (sb.length() == 0) {
+            sb.append(getSkillName(request.getSkillId()));
+        }
+        return sb.length() > 2000 ? sb.substring(0, 2000) : sb.toString();
+    }
+
+    private String serializeKnowledgeBaseIds(List<Long> knowledgeBaseIds) {
+        if (knowledgeBaseIds == null || knowledgeBaseIds.isEmpty()) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(knowledgeBaseIds);
+        } catch (JsonProcessingException e) {
+            log.warn("序列化知识库 ID 失败: {}", e.getMessage());
+            return null;
+        }
     }
 
     @Override
