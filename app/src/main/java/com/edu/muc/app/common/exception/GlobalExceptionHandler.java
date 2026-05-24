@@ -1,6 +1,8 @@
 package com.edu.muc.app.common.exception;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -17,6 +19,13 @@ import java.util.Map;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private final Environment environment;
+
+    @Autowired
+    public GlobalExceptionHandler(Environment environment) {
+        this.environment = environment;
+    }
     
     /**
      * 处理静态资源未找到异常（Spring Boot 3.5+ 默认行为）
@@ -79,9 +88,12 @@ public class GlobalExceptionHandler {
     }
     
     /**
-     * 判断是否为开发环境
+     * 判断是否为开发环境（基于 Spring profile，而不是 System property）
      */
     private boolean isDevelopmentEnvironment() {
-        return "dev".equals(System.getProperty("spring.profiles.active", "dev"));
+        if (environment == null) {
+            return false;
+        }
+        return environment.acceptsProfiles(org.springframework.core.env.Profiles.of("dev", "development"));
     }
 }

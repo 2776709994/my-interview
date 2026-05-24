@@ -3,9 +3,10 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/interview_guide
-    username: ${DB_USERNAME:postgres}
-    password: ${DB_PASSWORD:password}
+    # 支持 Docker Compose（POSTGRES_HOST/POSTGRES_PORT/POSTGRES_DB）与本地开发（DB_USERNAME/DB_PASSWORD）两套环境变量
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:interview_guide}
+    username: ${DB_USERNAME:${POSTGRES_USER:postgres}}
+    password: ${DB_PASSWORD:${POSTGRES_PASSWORD:password}}
     driver-class-name: org.postgresql.Driver
   data:
     redis:
@@ -74,15 +75,36 @@ minio:
   bucket-name: ${MINIO_BUCKET:my-interview}
   secure: false
 
-# RAG 配置
+# RAG 配置（top-k 依据 eval/output/compare_output.log 的 RAGAS 评测最优值 10/0.3 调整）
 rag:
   retrieval:
-    top-k: 15
+    top-k: 10
     final-top-k: 5
     similarity-threshold: 0.3
 
-# 语音面试配置（ASR/TTS 共用阿里云百炼 API Key）
+# 业务配置
 app:
+  # 面试配置（环境变量 APP_INTERVIEW_FOLLOW_UP_COUNT 可覆盖）
+  interview:
+    follow-up-count: ${APP_INTERVIEW_FOLLOW_UP_COUNT:2}
+  # LLM Provider 配置（LlmProviderRegistry 的数据种子；默认走 DashScope OpenAI 兼容端点）
+  ai:
+    default-provider: dashscope
+    default-embedding-provider: dashscope
+    embedding-dimensions: 1024
+    providers:
+      dashscope:
+        base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api-key: ${DASHSCOPE_API_KEY:}
+        model: ${AI_MODEL:glm-5.2}
+        embedding-model: qwen3.7-text-embedding
+        embedding-dimensions: 1024
+        supports-embedding: true
+        temperature: 0.7
+    security:
+      # API Key 加密密钥（AES-256-GCM）；不配置时使用开发用固定密钥并打印警告
+      api-key-encryption-key: ${APP_AI_CONFIG_ENCRYPTION_KEY:}
+  # 语音面试配置（ASR/TTS 共用阿里云百炼 API Key）
   voice-interview:
     llm-streaming-enabled: true
     chunked-audio-enabled: true

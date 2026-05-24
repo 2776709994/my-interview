@@ -44,8 +44,8 @@ public class UnifiedEvaluationService {
     private final int evaluationBatchSize;
     private final ResourceLoader resourceLoader;
 
-    // 批次评估结果
-    private record BatchReportDTO(
+    // 批次评估结果（public 以便 Jackson 反序列化 record）
+    public record BatchReportDTO(
         int overallScore,
         String overallFeedback,
         List<String> strengths,
@@ -53,7 +53,7 @@ public class UnifiedEvaluationService {
         List<QuestionEvalDTO> questionEvaluations
     ) {}
 
-    private record QuestionEvalDTO(
+    public record QuestionEvalDTO(
         int questionIndex,
         int score,
         String feedback,
@@ -67,7 +67,7 @@ public class UnifiedEvaluationService {
         BatchReportDTO report
     ) {}
 
-    private record SummaryDTO(
+    public record SummaryDTO(
         String overallFeedback,
         List<String> strengths,
         List<String> improvements

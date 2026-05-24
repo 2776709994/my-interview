@@ -116,4 +116,15 @@ public class KnowledgeDocument {
      * 分块索引（从0开始，-1表示未分块）
      */
     private Integer chunkIndex = -1;
+
+    /**
+     * 文件 MD5 哈希（用于上传查重）
+     */
+    private String fileHash;
+
+    /**
+     * 本次上传是否命中了重复文件（非数据库字段，仅用于接口响应）
+     */
+    @TableField(exist = false)
+    private boolean duplicate;
 }

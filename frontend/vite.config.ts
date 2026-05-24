@@ -29,6 +29,12 @@ export default defineConfig({
         target: 'http://localhost:8080',
         changeOrigin: true,
       },
+      // 语音面试 WebSocket（后端返回的 webSocketUrl 基于当前请求 host，dev 下是 5173）
+      '/ws': {
+        target: 'ws://localhost:8080',
+        ws: true,
+        changeOrigin: true,
+      },
     },
     // 忽略 @ricky0123/vad-web 的 sourcemap 警告
     sourcemapIgnoreList: (relativeSourcePath) => {

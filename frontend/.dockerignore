@@ -1,4 +1,5 @@
 # Dependencies (will be installed inside container)
+node_modules
 
 # Build output (will be generated inside container)
 dist

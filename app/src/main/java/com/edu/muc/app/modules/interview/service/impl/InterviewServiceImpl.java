@@ -26,6 +26,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,8 +41,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class InterviewServiceImpl implements InterviewService {
 
-    private static final int DEFAULT_FOLLOW_UP_COUNT = 2;
     private static final int MAX_RESUME_TEXT_LENGTH = 6000;
+
+    /**
+     * 主问题追问次数（可通过环境变量 APP_INTERVIEW_FOLLOW_UP_COUNT 覆盖）
+     */
+    @Value("${app.interview.follow-up-count:2}")
+    private int followUpCount;
 
     private final InterviewSessionMapper sessionMapper;
     private final InterviewQuestionMapper questionMapper;
@@ -96,7 +102,8 @@ public class InterviewServiceImpl implements InterviewService {
         session.setKnowledgeBaseIds(serializeKnowledgeBaseIds(request.getKnowledgeBaseIds()));
         session.setSkillId(request.getSkillId());
         session.setDifficulty(request.getDifficulty());
-        session.setTotalQuestions(request.getQuestionCount());
+        // 以实际生成的问题数为准（AI 可能少给题，避免答题时题目不存在）
+        session.setTotalQuestions(questions.size());
         session.setCurrentQuestionIndex(0);
         session.setStatus(SessionStatus.IN_PROGRESS.getCode());
         session.setEvaluateStatus(EvaluateStatus.PENDING.getCode());
@@ -152,8 +159,8 @@ public class InterviewServiceImpl implements InterviewService {
                     new DefaultResourceLoader().getResource("classpath:prompts/interview-question-skill-user.st")
             );
 
-            // 构建历史知识点（空，因为是第一次）
-            String historicalSection = "无";
+            // 构建历史知识点（基于同一简历的历史面试题目 topicSummary 去重，避免重复出题）
+            String historicalSection = buildHistoricalSection(request.getResumeId());
             
             // 构建问题分布表（简化版）
             String allocationTable = String.format(
@@ -188,7 +195,7 @@ public class InterviewServiceImpl implements InterviewService {
             systemVars.put("skillDescription", getSkillDescription(request.getSkillId()));
             systemVars.put("difficultyDescription", getDifficultyDescription(request.getDifficulty()));
             systemVars.put("questionCount", request.getQuestionCount());
-            systemVars.put("followUpCount", DEFAULT_FOLLOW_UP_COUNT);
+            systemVars.put("followUpCount", followUpCount);
             systemVars.put("allocationTable", allocationTable);
             systemVars.put("skillToolCommand", skillToolCommand);
             
@@ -199,7 +206,7 @@ public class InterviewServiceImpl implements InterviewService {
             userVars.put("jdText", request.getJdText() != null ? request.getJdText() : "");
             userVars.put("historicalSection", historicalSection);
             userVars.put("questionCount", request.getQuestionCount());
-            userVars.put("followUpCount", DEFAULT_FOLLOW_UP_COUNT);
+            userVars.put("followUpCount", followUpCount);
             userVars.put("difficultyDescription", getDifficultyDescription(request.getDifficulty()));
             userVars.put("skillName", getSkillName(request.getSkillId()));
             userVars.put("skillDescription", getSkillDescription(request.getSkillId()));
@@ -272,6 +279,9 @@ public class InterviewServiceImpl implements InterviewService {
                 question.setQuestion((String) qData.get("question"));
                 question.setType((String) qData.getOrDefault("type", "technical"));
                 question.setCategory((String) qData.getOrDefault("category", "general"));
+                // topicSummary：知识点摘要，用于历史去重（AI 未返回时置空，不影响出题）
+                Object topicSummary = qData.get("topicSummary");
+                question.setTopicSummary(topicSummary != null ? topicSummary.toString().trim() : null);
                 question.setUserAnswer(null);
                 question.setScore(null);
                 question.setFeedback(null);
@@ -361,6 +371,52 @@ public class InterviewServiceImpl implements InterviewService {
         }
     }
 
+    /**
+     * 构建历史知识点摘要：查询同一简历下最近面试的问题 topicSummary 并去重，
+     * 用于提示词中的"已考知识点"，避免历史面试重复出题。
+     */
+    private String buildHistoricalSection(Long resumeId) {
+        if (resumeId == null) {
+            return "无";
+        }
+        try {
+            List<InterviewSession> historySessions = sessionMapper.selectList(
+                    new LambdaQueryWrapper<InterviewSession>()
+                            .eq(InterviewSession::getResumeId, resumeId)
+                            .orderByDesc(InterviewSession::getCreatedAt)
+                            .last("LIMIT 5")
+            );
+            if (historySessions.isEmpty()) {
+                return "无";
+            }
+            List<String> sessionIds = historySessions.stream()
+                    .map(InterviewSession::getSessionId)
+                    .toList();
+            List<InterviewQuestion> historyQuestions = questionMapper.selectList(
+                    new LambdaQueryWrapper<InterviewQuestion>()
+                            .in(InterviewQuestion::getSessionId, sessionIds)
+                            .isNotNull(InterviewQuestion::getTopicSummary)
+                            .ne(InterviewQuestion::getTopicSummary, "")
+                            .orderByAsc(InterviewQuestion::getCreatedAt)
+            );
+            List<String> topics = historyQuestions.stream()
+                    .map(InterviewQuestion::getTopicSummary)
+                    .map(String::trim)
+                    .filter(t -> !t.isEmpty())
+                    .distinct()
+                    .limit(20)
+                    .toList();
+            if (topics.isEmpty()) {
+                return "无";
+            }
+            log.info("📚 历史知识点（topicSummary）: {}", topics);
+            return String.join("；", topics);
+        } catch (Exception e) {
+            log.warn("查询历史知识点失败，降级为无: {}", e.getMessage());
+            return "无";
+        }
+    }
+
     private String buildRagQueryText(CreateInterviewRequest request) {
         StringBuilder sb = new StringBuilder();
         String resumeText = request.getResumeText();
@@ -434,11 +490,25 @@ public class InterviewServiceImpl implements InterviewService {
             throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
 
+        // 校验会话状态：仅进行中/已创建的会话可提交答案
+        String status = session.getStatus();
+        if (!SessionStatus.IN_PROGRESS.getCode().equals(status)
+                && !SessionStatus.CREATED.getCode().equals(status)) {
+            throw new BusinessException("INTERVIEW_ALREADY_COMPLETED", "面试已结束，无法提交答案");
+        }
+
+        // 校验题目索引范围，防止乱序/越界提交破坏进度
+        int questionIndex = request.getQuestionIndex();
+        if (questionIndex < 0 || questionIndex >= session.getTotalQuestions()) {
+            throw new BusinessException("INTERVIEW_QUESTION_NOT_FOUND",
+                    "题目索引非法: " + questionIndex);
+        }
+
         // 保存答案到数据库
-        saveAnswerToDatabase(request.getSessionId(), request.getQuestionIndex(), request.getAnswer());
+        saveAnswerToDatabase(request.getSessionId(), questionIndex, request.getAnswer());
         
         // 更新当前题目索引
-        int nextIndex = request.getQuestionIndex() + 1;
+        int nextIndex = questionIndex + 1;
         session.setCurrentQuestionIndex(nextIndex);
         
         // 检查是否完成
@@ -510,6 +580,10 @@ public class InterviewServiceImpl implements InterviewService {
             // 如果还是 PENDING，说明消费者还没开始处理
             if (EvaluateStatus.PENDING.getCode().equals(session.getEvaluateStatus())) {
                 throw new BusinessException("EVALUATION_PENDING", "评估任务已提交，请稍后刷新查看结果");
+            }
+            // 若消费者已开始处理，同样告知用户稍后刷新，避免读到空报告
+            if (EvaluateStatus.PROCESSING.getCode().equals(session.getEvaluateStatus())) {
+                throw new BusinessException("EVALUATION_IN_PROGRESS", "评估正在处理中，请稍后刷新");
             }
         }
 
@@ -620,128 +694,6 @@ public class InterviewServiceImpl implements InterviewService {
         report.setReferenceAnswers(referenceAnswers);
         
         return report;
-    }
-
-    /**
-     * AI 生成评估报告
-     */
-    private void generateEvaluation(InterviewSession session) {
-        try {
-            log.info("🤖 开始生成评估报告: {}", session.getSessionId());
-            
-            session.setEvaluateStatus(EvaluateStatus.PROCESSING.getCode());
-            sessionMapper.updateById(session);
-
-            // 1. 获取所有问题和答案
-            List<InterviewQuestion> questions = questionMapper.selectList(
-                    new LambdaQueryWrapper<InterviewQuestion>()
-                            .eq(InterviewQuestion::getSessionId, session.getSessionId())
-                            .orderByAsc(InterviewQuestion::getQuestionIndex)
-            );
-            
-            List<InterviewAnswer> answers = answerMapper.selectList(
-                    new LambdaQueryWrapper<InterviewAnswer>()
-                            .eq(InterviewAnswer::getSessionId, session.getSessionId())
-                            .orderByAsc(InterviewAnswer::getQuestionIndex)
-            );
-            
-            if (questions.isEmpty()) {
-                throw new BusinessException("NO_QUESTIONS_FOUND", "没有可评估的问题");
-            }
-            if (answers.isEmpty()) {
-                throw new BusinessException("NO_ANSWERS_FOUND", "没有可评估的答案");
-            }
-
-            // 2. 构建评估请求
-            StringBuilder evaluationPrompt = new StringBuilder();
-            evaluationPrompt.append("请对以下面试回答进行评估：\n\n");
-            
-            for (int i = 0; i < questions.size(); i++) {
-                InterviewQuestion q = questions.get(i);
-                InterviewAnswer a = answers.stream()
-                        .filter(ans -> ans.getQuestionIndex().equals(q.getQuestionIndex()))
-                        .findFirst()
-                        .orElse(null);
-                
-                if (a != null) {
-                    evaluationPrompt.append(String.format(
-                            "问题 %d：%s\n类别：%s\n回答：%s\n\n",
-                            i + 1, q.getQuestion(), q.getCategory(), a.getAnswer()
-                    ));
-                }
-            }
-            
-            evaluationPrompt.append("\n请输出 JSON 格式，包含：");
-            evaluationPrompt.append("overallScore（总分0-100）, overallFeedback, strengths（数组）, improvements（数组）, ");
-            evaluationPrompt.append("questionEvaluations（数组，每项包含questionIndex, score, feedback）");
-
-            // 3. 调用 AI 评估
-            log.info("🤖 调用 AI 进行评估...");
-            String aiResponse = chatClient.prompt()
-                    .system("你是一位资深技术面试官，请客观、专业地评估候选人的回答。")
-                    .user(evaluationPrompt.toString())
-                    .call()
-                    .content();
-            
-            log.info("✅ AI 评估完成，响应长度: {}", aiResponse.length());
-
-            // 4. 解析评估结果
-            String jsonStr = JsonUtils.extractJson(aiResponse);
-            Map<String, Object> result = objectMapper.readValue(jsonStr, new TypeReference<Map<String, Object>>() {});
-            
-            // 5. 更新会话（安全类型转换，兼容 AI 返回的 Double 类型）
-            Object scoreObj = result.getOrDefault("overallScore", 0);
-            session.setOverallScore(scoreObj instanceof Number ? ((Number) scoreObj).intValue() : 0);
-            session.setOverallFeedback((String) result.get("overallFeedback"));
-            
-            @SuppressWarnings("unchecked")
-            List<String> strengths = (List<String>) result.get("strengths");
-            session.setStrengthsJson(objectMapper.writeValueAsString(strengths != null ? strengths : List.of()));
-            
-            @SuppressWarnings("unchecked")
-            List<String> improvements = (List<String>) result.get("improvements");
-            session.setImprovementsJson(objectMapper.writeValueAsString(improvements != null ? improvements : List.of()));
-            
-            // 6. 更新每个问题的评分
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> questionEvaluations = (List<Map<String, Object>>) result.get("questionEvaluations");
-            
-            if (questionEvaluations != null) {
-                for (Map<String, Object> eval : questionEvaluations) {
-                    // 安全类型转换，兼容 AI 返回的多种类型
-                    int qIndex = JsonUtils.safeGetInt(eval.get("questionIndex"));
-                    double score = JsonUtils.safeGetDouble(eval.get("score"));
-                    String feedback = (String) eval.get("feedback");
-
-                    // 更新答案表
-                    InterviewAnswer answer = answerMapper.selectOne(
-                            new LambdaQueryWrapper<InterviewAnswer>()
-                                    .eq(InterviewAnswer::getSessionId, session.getSessionId())
-                                    .eq(InterviewAnswer::getQuestionIndex, qIndex)
-                    );
-                    
-                    if (answer != null) {
-                        answer.setScore((int) score);
-                        answer.setFeedback(feedback);
-                        answer.setEvaluatedAt(LocalDateTime.now());
-                        answerMapper.updateById(answer);
-                    }
-                }
-            }
-            
-            session.setEvaluateStatus(EvaluateStatus.COMPLETED.getCode());
-            session.setStatus(SessionStatus.EVALUATED.getCode());
-            session.setEvaluatedAt(LocalDateTime.now());
-            sessionMapper.updateById(session);
-            
-            log.info("✅ 评估报告生成完成");
-
-        } catch (Exception e) {
-            log.error("❌ 生成评估报告失败", e);
-            session.setEvaluateStatus(EvaluateStatus.FAILED.getCode());
-            session.setEvaluateError(e.getMessage());
-            sessionMapper.updateById(session);
-        }
     }
 
     @Override
@@ -894,6 +846,7 @@ public class InterviewServiceImpl implements InterviewService {
             question.setQuestion(dto.getQuestion());
             question.setType(dto.getType());
             question.setCategory(dto.getCategory());
+            question.setTopicSummary(dto.getTopicSummary());
             question.setCreatedAt(LocalDateTime.now());
             
             questionMapper.insert(question);

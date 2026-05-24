@@ -73,6 +73,19 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             String hash = calculateMD5(file);
             log.info("🔍 文件 MD5: {}", hash);
 
+            // 1.1 查重：内容相同的文件直接返回已有父文档记录，不再重复解析与向量化
+            KnowledgeDocument existing = documentMapper.selectOne(
+                    new LambdaQueryWrapper<KnowledgeDocument>()
+                            .eq(KnowledgeDocument::getFileHash, hash)
+                            .isNull(KnowledgeDocument::getParentId)
+                            .last("LIMIT 1")
+            );
+            if (existing != null) {
+                log.info("♻️ 知识库已存在相同文件（MD5: {}），返回已有记录 id={}", hash, existing.getId());
+                existing.setDuplicate(true);
+                return existing;
+            }
+
             // 2. 上传到 MinIO（使用 knowledge-base 目录）
             storageKey = fileStorageService.store(file, "knowledge-base");
             String storageUrl = fileStorageService.getFileUrl(storageKey);
@@ -96,6 +109,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             parentDoc.setContentType(file.getContentType());
             parentDoc.setStorageKey(storageKey);
             parentDoc.setStorageUrl(storageUrl);
+            parentDoc.setFileHash(hash);
             parentDoc.setVectorStatus("COMPLETED");
             parentDoc.setChunkCount(chunks.size());
             parentDoc.setQuestionCount(0);
@@ -304,8 +318,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 float[] qEmbedding = embeddingModel.embed(question);
                 String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
                 
-                // 2. 智能检索相关文档片段（带相似度过滤）
-                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson);
+                // 2. 智能检索相关文档片段（按请求指定的知识库 ID 过滤，空列表表示检索全部）
+                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson, knowledgeBaseIds);
                 
                 // 3. 构建上下文（使用 chunk 的内容）
                 String context = docs.stream()

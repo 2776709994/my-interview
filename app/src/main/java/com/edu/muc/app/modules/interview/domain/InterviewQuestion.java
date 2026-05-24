@@ -23,6 +23,9 @@ public class InterviewQuestion {
 
     private String category;
 
+    /** 知识点摘要（10 字以内），用于历史面试去重 */
+    private String topicSummary;
+
     private String referenceAnswer;
 
     private String keyPointsJson;

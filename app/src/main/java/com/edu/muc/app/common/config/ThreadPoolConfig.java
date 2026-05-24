@@ -45,4 +45,14 @@ public class ThreadPoolConfig {
         log.info("✅ 面试评估虚拟线程 Executor 已创建（无并发上限）");
         return Executors.newVirtualThreadPerTaskExecutor();
     }
+
+    /**
+     * 语音面试评估专用虚拟线程 Executor
+     * 与文字面试评估隔离，避免相互抢占
+     */
+    @Bean("voiceEvaluationExecutor")
+    public ExecutorService voiceEvaluationExecutor() {
+        log.info("✅ 语音面试评估虚拟线程 Executor 已创建（无并发上限）");
+        return Executors.newVirtualThreadPerTaskExecutor();
+    }
 }

@@ -5,6 +5,7 @@ import com.edu.muc.app.modules.voiceinterview.dto.WebSocketControlMessage;
 import com.edu.muc.app.modules.voiceinterview.dto.WebSocketSubtitleMessage;
 import com.edu.muc.app.modules.voiceinterview.model.VoiceInterviewMessageEntity;
 import com.edu.muc.app.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import com.edu.muc.app.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import com.edu.muc.app.modules.voiceinterview.service.DashscopeLlmService;
 import com.edu.muc.app.modules.voiceinterview.service.QwenAsrService;
 import com.edu.muc.app.modules.voiceinterview.service.QwenTtsService;
@@ -129,6 +130,21 @@ public class VoiceInterviewWebSocketHandler extends TextWebSocketHandler impleme
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String sessionId = extractSessionId(session);
+
+        // 会话校验：会话必须存在且处于进行中/已暂停状态，防止随意连接或连接已结束的会话
+        VoiceInterviewSessionEntity sessionEntity = getSessionEntity(sessionId);
+        if (sessionEntity == null) {
+            log.warn("拒绝 WebSocket 连接：会话不存在，sessionId={}", sessionId);
+            session.close(CloseStatus.NOT_ACCEPTABLE.withReason("会话不存在"));
+            return;
+        }
+        if (sessionEntity.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS
+                && sessionEntity.getStatus() != VoiceInterviewSessionStatus.PAUSED) {
+            log.warn("拒绝 WebSocket 连接：会话状态不允许（{}），sessionId={}",
+                    sessionEntity.getStatus(), sessionId);
+            session.close(CloseStatus.NOT_ACCEPTABLE.withReason("会话状态不允许连接"));
+            return;
+        }
 
         session.setTextMessageSizeLimit(256 * 1024);
         session.setBinaryMessageSizeLimit(256 * 1024);

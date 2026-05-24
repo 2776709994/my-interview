@@ -21,6 +21,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -114,7 +116,10 @@ public class VoiceInterviewService {
         }
 
         endSession(session);
-        voiceEvaluateStreamProducer.sendEvaluateTask(sessionId);
+        // 入队失败时由调用方直接标记评估失败，避免前端一直停留在等待状态
+        if (voiceEvaluateStreamProducer.sendEvaluateTask(sessionId) == null) {
+            updateEvaluateStatus(sessionIdLong, AsyncTaskStatus.FAILED, "评估任务入队失败");
+        }
     }
 
     private void endSession(VoiceInterviewSessionEntity session) {
@@ -527,8 +532,40 @@ public class VoiceInterviewService {
                 .status(session.getStatus().name())
                 .startTime(session.getStartTime())
                 .plannedDuration(session.getPlannedDuration())
-                .webSocketUrl(String.format("ws://localhost:8080/ws/voice-interview/%d", session.getId()))
+                .webSocketUrl(buildWebSocketUrl(session.getId()))
                 .build();
+    }
+
+    /**
+     * 基于当前请求动态构造 WebSocket 地址（兼容局域网访问与 Nginx 反向代理），
+     * 修复原实现写死 ws://localhost:8080 导致非本机访问无法连接的问题。
+     */
+    private String buildWebSocketUrl(Long sessionId) {
+        try {
+            ServletRequestAttributes attrs = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs != null) {
+                jakarta.servlet.http.HttpServletRequest request = attrs.getRequest();
+                // 反向代理场景优先使用转发头
+                String scheme = request.getHeader("X-Forwarded-Proto");
+                if (scheme == null || scheme.isBlank()) {
+                    scheme = request.getScheme();
+                }
+                String host = request.getHeader("X-Forwarded-Host");
+                if (host == null || host.isBlank()) {
+                    host = request.getServerName();
+                    int port = request.getServerPort();
+                    boolean secure = "https".equalsIgnoreCase(scheme);
+                    if (!((secure && port == 443) || (!secure && port == 80))) {
+                        host = host + ":" + port;
+                    }
+                }
+                String wsScheme = "https".equalsIgnoreCase(scheme) ? "wss" : "ws";
+                return String.format("%s://%s/ws/voice-interview/%d", wsScheme, host, sessionId);
+            }
+        } catch (Exception e) {
+            log.warn("构建 WebSocket URL 失败，使用默认地址: {}", e.getMessage());
+        }
+        return String.format("ws://localhost:8080/ws/voice-interview/%d", sessionId);
     }
 
     private VoiceInterviewProperties.DurationConfig getPhaseConfig(VoiceInterviewSessionEntity.InterviewPhase phase) {

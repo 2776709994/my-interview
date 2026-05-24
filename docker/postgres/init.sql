@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     content_type VARCHAR(100),
     storage_key VARCHAR(255),
     storage_url TEXT,
+    file_hash VARCHAR(64),
     vector_status VARCHAR(50) DEFAULT 'PENDING',
     vector_error TEXT,
     chunk_count INTEGER DEFAULT 1,
@@ -27,6 +28,9 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 CREATE INDEX IF NOT EXISTS idx_knowledge_doc_embedding_hnsw 
 ON knowledge_documents 
 USING hnsw (content_embedding vector_cosine_ops);
+
+-- 文件哈希索引（MD5 查重）
+CREATE INDEX IF NOT EXISTS idx_knowledge_doc_file_hash ON knowledge_documents(file_hash);
 
 -- 简历表
 CREATE TABLE IF NOT EXISTS resumes (
@@ -155,6 +159,7 @@ CREATE TABLE IF NOT EXISTS interview_questions (
     question TEXT,
     type VARCHAR(50),
     category VARCHAR(100),
+    topic_summary VARCHAR(255),
     reference_answer TEXT,
     key_points_json TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

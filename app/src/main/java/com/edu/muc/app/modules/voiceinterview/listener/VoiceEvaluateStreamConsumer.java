@@ -1,6 +1,8 @@
 package com.edu.muc.app.modules.voiceinterview.listener;
 
+import com.edu.muc.app.common.constant.AsyncTaskStreamConstants;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
+import com.edu.muc.app.infrastructure.redis.StreamPendingRecoverer;
 import com.edu.muc.app.modules.voiceinterview.service.VoiceInterviewEvaluationService;
 import com.edu.muc.app.modules.voiceinterview.service.VoiceInterviewService;
 import jakarta.annotation.PostConstruct;
@@ -27,20 +29,23 @@ public class VoiceEvaluateStreamConsumer {
     private final VoiceInterviewService voiceInterviewService;
     private final VoiceInterviewEvaluationService evaluationService;
     private final ExecutorService executor;
+    private final StreamPendingRecoverer pendingRecoverer;
 
-    private static final String STREAM_KEY = "voice-interview:evaluation";
-    private static final String GROUP = "voice-interview-evaluation-group";
+    private static final String STREAM_KEY = AsyncTaskStreamConstants.VOICE_EVALUATE_STREAM_KEY;
+    private static final String GROUP = AsyncTaskStreamConstants.VOICE_EVALUATE_GROUP_NAME;
 
     private Thread listenerThread;
 
     public VoiceEvaluateStreamConsumer(RedisTemplate<String, Object> redisTemplate,
                                        VoiceInterviewService voiceInterviewService,
                                        VoiceInterviewEvaluationService evaluationService,
-                                       @org.springframework.beans.factory.annotation.Qualifier("interviewEvaluationExecutor")
+                                       StreamPendingRecoverer pendingRecoverer,
+                                       @org.springframework.beans.factory.annotation.Qualifier("voiceEvaluationExecutor")
                                        ExecutorService executor) {
         this.redisTemplate = redisTemplate;
         this.voiceInterviewService = voiceInterviewService;
         this.evaluationService = evaluationService;
+        this.pendingRecoverer = pendingRecoverer;
         this.executor = executor;
     }
 
@@ -56,8 +61,10 @@ public class VoiceEvaluateStreamConsumer {
             }
         }
 
-        String consumerName = "voice-eval-consumer-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        String consumerName = AsyncTaskStreamConstants.VOICE_EVALUATE_CONSUMER_PREFIX
+                + java.util.UUID.randomUUID().toString().substring(0, 8);
         listenerThread = new Thread(() -> {
+            int loopCount = 0;
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     List<MapRecord<String, Object, Object>> messages = redisTemplate.opsForStream()
@@ -69,7 +76,7 @@ public class VoiceEvaluateStreamConsumer {
 
                     if (messages != null && !messages.isEmpty()) {
                         for (MapRecord<String, Object, Object> record : messages) {
-                            String sessionId = (String) record.getValue().get("voiceSessionId");
+                            String sessionId = (String) record.getValue().get(AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID);
                             RecordId recordId = record.getId();
 
                             executor.submit(() -> {
@@ -77,7 +84,7 @@ public class VoiceEvaluateStreamConsumer {
                                     processVoiceEvaluation(sessionId);
                                     redisTemplate.opsForStream().acknowledge(STREAM_KEY, GROUP, recordId);
                                 } catch (Exception e) {
-                                    log.error("❌ 语音面试评估任务异常，消息将保留在 PEL 中等待重试，sessionId: {}", sessionId, e);
+                                    log.error("❌ 语音面试评估任务异常，消息将保留在 PEL 中等待恢复，sessionId: {}", sessionId, e);
                                 }
                             });
                         }
@@ -98,6 +105,15 @@ public class VoiceEvaluateStreamConsumer {
                         Thread.currentThread().interrupt();
                         break;
                     }
+                }
+                // 每 15 轮（约 30 秒）扫描一次 PEL，恢复异常遗留的消息
+                if (++loopCount % 15 == 0) {
+                    pendingRecoverer.recover(STREAM_KEY, GROUP, consumerName, executor, fields -> {
+                        Object sessionId = fields.get(AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID);
+                        if (sessionId != null) {
+                            processVoiceEvaluation(sessionId.toString());
+                        }
+                    });
                 }
             }
             log.info("🛑 语音面试评估监听线程已退出");

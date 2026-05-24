@@ -65,7 +65,7 @@ public class KnowledgeBaseController {
 
         resp.put("knowledgeBase", kb);
         resp.put("storage", storage);
-        resp.put("duplicate", false);
+        resp.put("duplicate", document.isDuplicate());
 
         return Result.success(resp);
     }

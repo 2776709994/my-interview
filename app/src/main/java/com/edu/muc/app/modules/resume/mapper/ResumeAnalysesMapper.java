@@ -40,7 +40,7 @@ public interface ResumeAnalysesMapper extends BaseMapper<ResumeAnalyses> {
     @Update("UPDATE resume_analyses SET skill_match_score=#{skillMatchScore}, " +
             "structure_score=#{structureScore}, expression_score=#{expressionScore}, " +
             "project_score=#{projectScore}, content_score=#{contentScore}, " +
-            "overall_score=#{overallScore}, summary_text=#{summaryText}, " +
+            "overall_score=#{overallScore}, summary=#{summaryText}, " +
             "strengths_json=#{strengthsJson}, suggestions_json=#{suggestionsJson}, " +
             "analyzed_at=now() WHERE id=#{id}")
     int updateAnalysisResult(@Param("id") Long id,

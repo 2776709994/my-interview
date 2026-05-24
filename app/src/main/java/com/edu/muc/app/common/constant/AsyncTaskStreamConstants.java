@@ -2,7 +2,8 @@ package com.edu.muc.app.common.constant;
 
 /**
  * 异步任务 Redis Stream 通用常量
- * 包含知识库向量化和简历分析两个异步任务的配置
+ * 包含简历分析、面试评估、语音面试评估三个异步任务的配置。
+ * 注意：知识库向量化 Stream（KB_VECTORIZE_*）为预留设计，当前未实现。
  */
 public final class AsyncTaskStreamConstants {
 
@@ -40,11 +41,11 @@ public final class AsyncTaskStreamConstants {
     public static final long POLL_INTERVAL_MS = 1000;
 
     /**
-     * Stream 最大长度（自动裁剪旧消息，防止无限增长）
+     * Stream 最大长度（生产端每次写入后裁剪，防止无限增长）
      */
     public static final int STREAM_MAX_LEN = 1000;
 
-    // ========== 知识库向量化 Stream 配置 ==========
+    // ========== 知识库向量化 Stream 配置（预留，未实现） ==========
 
     /**
      * 知识库向量化 Stream Key
@@ -67,21 +68,22 @@ public final class AsyncTaskStreamConstants {
     public static final String FIELD_KB_ID = "kbId";
 
     // ========== 简历分析 Stream 配置 ==========
+    // 注意：以下 key/group 与实现（ResumeAnalysisConsumer）保持一致
 
     /**
      * 简历分析 Stream Key
      */
-    public static final String RESUME_ANALYZE_STREAM_KEY = "resume:analyze:stream";
+    public static final String RESUME_ANALYZE_STREAM_KEY = "resume:analysis";
 
     /**
      * 简历分析 Consumer Group 名称
      */
-    public static final String RESUME_ANALYZE_GROUP_NAME = "analyze-group";
+    public static final String RESUME_ANALYZE_GROUP_NAME = "resume-analysis-group";
 
     /**
      * 简历分析 Consumer 名称前缀
      */
-    public static final String RESUME_ANALYZE_CONSUMER_PREFIX = "analyze-consumer-";
+    public static final String RESUME_ANALYZE_CONSUMER_PREFIX = "resume-consumer-";
 
     /**
      * 简历ID字段
@@ -89,21 +91,22 @@ public final class AsyncTaskStreamConstants {
     public static final String FIELD_RESUME_ID = "resumeId";
 
     // ========== 面试评估 Stream 配置 ==========
+    // 注意：以下 key/group 与实现（InterviewEvaluationConsumer）保持一致
 
     /**
      * 面试评估 Stream Key
      */
-    public static final String INTERVIEW_EVALUATE_STREAM_KEY = "interview:evaluate:stream";
+    public static final String INTERVIEW_EVALUATE_STREAM_KEY = "interview:evaluation";
 
     /**
      * 面试评估 Consumer Group 名称
      */
-    public static final String INTERVIEW_EVALUATE_GROUP_NAME = "evaluate-group";
+    public static final String INTERVIEW_EVALUATE_GROUP_NAME = "interview-evaluation-group";
 
     /**
      * 面试评估 Consumer 名称前缀
      */
-    public static final String INTERVIEW_EVALUATE_CONSUMER_PREFIX = "evaluate-consumer-";
+    public static final String INTERVIEW_EVALUATE_CONSUMER_PREFIX = "interview-eval-consumer-";
 
     /**
      * 面试会话ID字段
@@ -111,21 +114,22 @@ public final class AsyncTaskStreamConstants {
     public static final String FIELD_SESSION_ID = "sessionId";
 
     // ========== 语音面试评估 Stream 配置 ==========
+    // 注意：以下 key/group 与实现（VoiceEvaluateStreamConsumer）保持一致
 
     /**
      * 语音面试评估 Stream Key
      */
-    public static final String VOICE_EVALUATE_STREAM_KEY = "voice:evaluate:stream";
+    public static final String VOICE_EVALUATE_STREAM_KEY = "voice-interview:evaluation";
 
     /**
      * 语音面试评估 Consumer Group 名称
      */
-    public static final String VOICE_EVALUATE_GROUP_NAME = "voice-evaluate-group";
+    public static final String VOICE_EVALUATE_GROUP_NAME = "voice-interview-evaluation-group";
 
     /**
      * 语音面试评估 Consumer 名称前缀
      */
-    public static final String VOICE_EVALUATE_CONSUMER_PREFIX = "voice-evaluate-consumer-";
+    public static final String VOICE_EVALUATE_CONSUMER_PREFIX = "voice-eval-consumer-";
 
     /**
      * 语音面试会话ID字段

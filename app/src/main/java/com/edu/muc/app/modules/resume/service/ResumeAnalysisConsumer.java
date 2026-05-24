@@ -1,6 +1,8 @@
 package com.edu.muc.app.modules.resume.service;
 
+import com.edu.muc.app.common.constant.AsyncTaskStreamConstants;
 import com.edu.muc.app.infrastructure.file.MinioFileStorageService;
+import com.edu.muc.app.infrastructure.redis.StreamPendingRecoverer;
 import com.edu.muc.app.modules.resume.domain.ResumeAnalyses;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.mapper.ResumeAnalysesMapper;
@@ -35,9 +37,10 @@ public class ResumeAnalysisConsumer {
     private final ChatClient chatClient;
     private final MinioFileStorageService fileStorageService;
     private final ExecutorService executor;  // 从配置注入
-    
-    private static final String STREAM_KEY = "resume:analysis";
-    private static final String GROUP = "resume-analysis-group";
+    private final StreamPendingRecoverer pendingRecoverer;
+
+    private static final String STREAM_KEY = AsyncTaskStreamConstants.RESUME_ANALYZE_STREAM_KEY;
+    private static final String GROUP = AsyncTaskStreamConstants.RESUME_ANALYZE_GROUP_NAME;
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private Thread listenerThread;
@@ -48,6 +51,7 @@ public class ResumeAnalysisConsumer {
                                   ResumeAnalysesMapper analysesMapper,
                                   MinioFileStorageService fileStorageService,
                                   ChatClient chatClient,
+                                  StreamPendingRecoverer pendingRecoverer,
                                   @org.springframework.beans.factory.annotation.Qualifier("resumeAnalysisExecutor") 
                                   ExecutorService executor) {
         this.redisTemplate = redisTemplate;
@@ -55,6 +59,7 @@ public class ResumeAnalysisConsumer {
         this.analysesMapper = analysesMapper;
         this.chatClient = chatClient;
         this.fileStorageService = fileStorageService;
+        this.pendingRecoverer = pendingRecoverer;
         this.executor = executor;
 
     }
@@ -74,8 +79,10 @@ public class ResumeAnalysisConsumer {
 
         // 2. 启动独立线程持续监听
         log.info("✅ 启动独立线程持续监听 resume:analysis");
-        String consumerName = "resume-consumer-" + java.util.UUID.randomUUID().toString().substring(0, 8);
+        String consumerName = AsyncTaskStreamConstants.RESUME_ANALYZE_CONSUMER_PREFIX
+                + java.util.UUID.randomUUID().toString().substring(0, 8);
         listenerThread = new Thread(() -> {
+            int loopCount = 0;
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     List<MapRecord<String, Object, Object>> messages = redisTemplate.opsForStream()
@@ -86,7 +93,7 @@ public class ResumeAnalysisConsumer {
                             );
                     if (messages != null && !messages.isEmpty()) {
                         for (MapRecord<String, Object, Object> record : messages) {
-                            String resumeId = (String) record.getValue().get("resumeId");
+                            String resumeId = (String) record.getValue().get(AsyncTaskStreamConstants.FIELD_RESUME_ID);
                             RecordId recordId = record.getId();
                             
                             // 提交到线程池异步处理，处理完成后再 ACK
@@ -96,7 +103,7 @@ public class ResumeAnalysisConsumer {
                                     // 只有处理成功才 ACK
                                     redisTemplate.opsForStream().acknowledge(STREAM_KEY, GROUP, recordId);
                                 } catch (Exception e) {
-                                    log.error("❌ 分析任务异常，消息将保留在 PEL 中等待重试，resumeId: {}", resumeId, e);
+                                    log.error("❌ 分析任务异常，消息将保留在 PEL 中等待恢复，resumeId: {}", resumeId, e);
                                 }
                             });
                         }
@@ -117,6 +124,15 @@ public class ResumeAnalysisConsumer {
                         Thread.currentThread().interrupt();
                         break;
                     }
+                }
+                // 每 15 轮（约 30 秒）扫描一次 PEL，恢复异常遗留的消息
+                if (++loopCount % 15 == 0) {
+                    pendingRecoverer.recover(STREAM_KEY, GROUP, consumerName, executor, fields -> {
+                        Object resumeId = fields.get(AsyncTaskStreamConstants.FIELD_RESUME_ID);
+                        if (resumeId != null) {
+                            processResumeAnalysis(Long.parseLong(resumeId.toString()));
+                        }
+                    });
                 }
             }
             log.info("🛑 Redis Stream 监听线程已退出");
