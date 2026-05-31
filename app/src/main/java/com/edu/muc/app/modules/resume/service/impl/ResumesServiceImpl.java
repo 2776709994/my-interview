@@ -20,6 +20,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import java.math.BigInteger;
 import java.security.MessageDigest;
@@ -85,7 +87,20 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
             resume.setUploadedAt(LocalDateTime.now());
             resumesMapper.insert(resume);
 
-            streamProducer.sendResumeAnalysisTask(String.valueOf(resume.getId()));
+            // 关键修复：必须在事务提交（afterCommit）后再发送分析任务。
+            // 若在提交前 XADD，消费端会立刻读到未提交的行（PostgreSQL READ COMMITTED
+            // 下不可见），导致消费端误判"简历不存在"并 ACK 丢弃消息，简历永远卡在 PENDING。
+            final Long newResumeId = resume.getId();
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        streamProducer.sendResumeAnalysisTask(String.valueOf(newResumeId));
+                    } catch (Exception e) {
+                        log.error("❌ 事务提交后发送简历分析任务失败（可在前端手动重新分析）: {}", newResumeId, e);
+                    }
+                }
+            });
 
             return resume;
         } catch (Exception e) {

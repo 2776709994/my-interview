@@ -198,8 +198,9 @@ public class InterviewEvaluationConsumer {
         
         InterviewSession session = sessionMapper.selectById(sessionId);
         if (session == null) {
-            log.error("❌ 面试会话不存在, sessionId: {}", sessionId);
-            return;
+            // 与简历分析消费端同一修复：不能静默 return（上层会 ACK 丢消息），
+            // 抛异常让消息留在 PEL，由 StreamPendingRecoverer 重投，超限后死信。
+            throw new IllegalStateException("面试会话不存在，消息留在 PEL 等待重试: " + sessionId);
         }
 
         try {

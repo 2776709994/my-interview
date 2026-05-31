@@ -184,8 +184,11 @@ public class ResumeAnalysisConsumer {
         log.info("📝 查询简历信息，简历ID: {}", resumeId);
         Resumes resume = resumesMapper.selectById(resumeId);
         if (resume == null) {
-            log.error("❌ 简历不存在，简历ID: {}", resumeId);
-            return;
+            // 关键修复：不能静默 return —— 上层会视为处理成功并 ACK 消息，
+            // 任务将永久丢失（简历永远卡在 PENDING，且无法自动恢复）。
+            // 抛异常让消息留在 PEL，由 StreamPendingRecoverer 5 分钟后重投，
+            // 投递超过 MAX_DELIVERY(3) 次仍未成功才死信 ACK 放弃。
+            throw new IllegalStateException("简历不存在，消息留在 PEL 等待重试: " + resumeId);
         }
         log.info("✅ 查询到简历信息，文件名: {}", resume.getOriginalFilename());
 
