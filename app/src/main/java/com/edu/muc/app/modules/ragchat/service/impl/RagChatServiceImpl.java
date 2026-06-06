@@ -298,8 +298,8 @@ public class RagChatServiceImpl implements RagChatService {
                 float[] qEmbedding = embeddingModel.embed(question);
                 String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
                 
-                // 2. 智能检索相关文档片段（按会话关联的知识库 ID 过滤）
-                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson, knowledgeBaseIds);
+                // 2. 智能检索相关文档片段（双路检索：向量 + 关键词 + Rerank，按会话关联的知识库 ID 过滤）
+                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(question, qJson, knowledgeBaseIds);
                 
                 // 3. 构建上下文（使用 chunk 的内容，并标注来源）
                 String context = docs.stream()

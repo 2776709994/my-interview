@@ -21,7 +21,10 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     access_count INTEGER DEFAULT 0,
     uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP,
-    last_accessed_at TIMESTAMP
+    last_accessed_at TIMESTAMP,
+    -- 父子文档结构：父文档为原始文件（parent_id=NULL，chunk_index=-1），子文档为分块（parent_id=父文档ID，chunk_index=分块序号）
+    parent_id BIGINT,
+    chunk_index INTEGER DEFAULT -1
 );
 
 -- 为向量列创建 HNSW 索引（加速余弦相似度检索）

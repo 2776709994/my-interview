@@ -81,6 +81,14 @@ rag:
     top-k: 10
     final-top-k: 5
     similarity-threshold: 0.3
+    # 关键词路召回数（pg_trgm，与向量路保持一致，维持"Top-10 召回"口径）
+    keyword-top-k: ${RAG_KEYWORD_TOP_K:10}
+    # 重排（gte-rerank-v2 交叉编码器，失败自动降级为 RRF 融合顺序）
+    rerank:
+      enabled: ${RAG_RERANK_ENABLED:true}
+      url: ${RAG_RERANK_URL:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
+      model: ${RAG_RERANK_MODEL:gte-rerank-v2}
+      timeout-seconds: ${RAG_RERANK_TIMEOUT:5}
 
 # 业务配置
 app:

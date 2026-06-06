@@ -216,8 +216,8 @@ public class KnowledgeBaseController {
         float[] qEmbedding = embeddingModel.embed(question);
         String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
 
-        // 2. 智能检索相关文档片段
-        List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(qJson);
+        // 2. 智能检索相关文档（双路检索：向量 + 关键词 + Rerank）
+        List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(question, qJson, null);
 
         // 3. 构建上下文
         List<String> contextList = docs.stream()

@@ -355,7 +355,7 @@ public class InterviewServiceImpl implements InterviewService {
             float[] queryEmbedding = embeddingModel.embed(queryText);
             String queryVector = JsonUtils.convertEmbeddingToJson(queryEmbedding);
 
-            List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(queryVector, knowledgeBaseIds);
+            List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(queryText, queryVector, knowledgeBaseIds);
             if (docs.isEmpty()) {
                 log.info("📚 RAG 出题：知识库 {} 未检索到相关内容", knowledgeBaseIds);
                 return "无";

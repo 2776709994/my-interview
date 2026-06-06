@@ -48,6 +48,17 @@ public interface KnowledgeDocumentMapper extends BaseMapper<KnowledgeDocument> {
                                                                @Param("knowledgeBaseIds") List<Long> knowledgeBaseIds);
 
     /**
+     * 关键词检索（pg_trgm）：子串匹配 + 相似度排序，GIN 索引加速
+     * @param keyword 关键词（建议 ≥2 字符；>50 字符由调用方截断）
+     * @param limit 返回数量
+     * @param knowledgeBaseIds 知识库 ID 列表（可为 null）
+     * @return 包含 kw_score 相似度分数的 Map 列表
+     */
+    List<Map<String, Object>> searchByKeyword(@Param("keyword") String keyword,
+                                              @Param("limit") int limit,
+                                              @Param("knowledgeBaseIds") List<Long> knowledgeBaseIds);
+
+    /**
      * 自定义插入，处理 vector 类型转换
      */
     int insertVectorDocument(KnowledgeDocument document);

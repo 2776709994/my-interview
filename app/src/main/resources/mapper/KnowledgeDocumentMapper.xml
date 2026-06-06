@@ -48,5 +48,23 @@
         LIMIT #{limit}
         ]]>
     </select>
+    <!-- 关键词检索（pg_trgm）：word_similarity 模糊子串打分排序（中文无需分词器，取相对 Top-K） -->
+    <select id="searchByKeyword" resultType="map">
+        <![CDATA[
+        SELECT *, word_similarity(content, #{keyword}) AS kw_score
+        FROM knowledge_documents
+        WHERE parent_id IS NOT NULL
+        ]]>
+        <if test="knowledgeBaseIds != null and !knowledgeBaseIds.isEmpty()">
+            AND parent_id IN
+            <foreach collection="knowledgeBaseIds" item="kbId" open="(" separator="," close=")">
+                #{kbId}
+            </foreach>
+        </if>
+        <![CDATA[
+        ORDER BY kw_score DESC
+        LIMIT #{limit}
+        ]]>
+    </select>
 
 </mapper>
