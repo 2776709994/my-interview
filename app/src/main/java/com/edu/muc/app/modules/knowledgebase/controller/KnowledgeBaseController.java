@@ -9,6 +9,7 @@ import com.edu.muc.app.modules.knowledgebase.dto.KnowledgeStatsDTO;
 import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
 import com.edu.muc.app.modules.knowledgebase.service.KnowledgeDocumentService;
 import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
+import com.edu.muc.app.modules.knowledgebase.service.impl.EmbeddingCacheService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
@@ -38,6 +39,7 @@ public class KnowledgeBaseController {
     private final EmbeddingModel embeddingModel;
     private final ChatClient chatClient;
     private final KnowledgeDocumentMapper documentMapper;
+    private final EmbeddingCacheService embeddingCacheService;
 
     /**
      * 上传知识文档
@@ -212,8 +214,8 @@ public class KnowledgeBaseController {
             throw new BusinessException("VALIDATION_ERROR", "提问内容不能超过2000字");
         }
 
-        // 1. 将问题向量化
-        float[] qEmbedding = embeddingModel.embed(question);
+        // 1. 将问题向量化（高频问题走 Redis 缓存，命中跳过 embedding 调用）
+        float[] qEmbedding = embeddingCacheService.embedCached(embeddingModel, question);
         String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
 
         // 2. 智能检索相关文档（双路检索：向量 + 关键词 + Rerank）

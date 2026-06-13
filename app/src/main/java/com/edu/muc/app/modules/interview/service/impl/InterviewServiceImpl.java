@@ -17,6 +17,7 @@ import com.edu.muc.app.modules.interview.mapper.InterviewSessionMapper;
 import com.edu.muc.app.modules.interview.service.InterviewService;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
 import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
+import com.edu.muc.app.modules.knowledgebase.service.impl.EmbeddingCacheService;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.mapper.ResumesMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -57,6 +58,7 @@ public class InterviewServiceImpl implements InterviewService {
     private final ResumesMapper resumesMapper;
     private final LlmProviderRegistry llmProviderRegistry;
     private final SmartRetrievalService smartRetrievalService;
+    private final EmbeddingCacheService embeddingCacheService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
@@ -352,7 +354,7 @@ public class InterviewServiceImpl implements InterviewService {
                 return "无";
             }
             EmbeddingModel embeddingModel = llmProviderRegistry.getDefaultEmbeddingModel();
-            float[] queryEmbedding = embeddingModel.embed(queryText);
+            float[] queryEmbedding = embeddingCacheService.embedCached(embeddingModel, queryText);
             String queryVector = JsonUtils.convertEmbeddingToJson(queryEmbedding);
 
             List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(queryText, queryVector, knowledgeBaseIds);

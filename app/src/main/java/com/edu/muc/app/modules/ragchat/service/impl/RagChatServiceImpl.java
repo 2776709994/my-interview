@@ -7,6 +7,7 @@ import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
 import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
 import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
+import com.edu.muc.app.modules.knowledgebase.service.impl.EmbeddingCacheService;
 import com.edu.muc.app.modules.ragchat.domain.ChatMessage;
 import com.edu.muc.app.modules.ragchat.domain.ChatSession;
 import com.edu.muc.app.modules.ragchat.dto.RagChatSessionDetail;
@@ -48,6 +49,7 @@ public class RagChatServiceImpl implements RagChatService {
     private final EmbeddingModel embeddingModel;
     private final ChatClient chatClient;
     private final SmartRetrievalService smartRetrievalService;
+    private final EmbeddingCacheService embeddingCacheService;
     private final ExecutorService ragQueryExecutor;
 
     public RagChatServiceImpl(ChatSessionMapper sessionMapper,
@@ -57,6 +59,7 @@ public class RagChatServiceImpl implements RagChatService {
                               EmbeddingModel embeddingModel,
                               ChatClient chatClient,
                               SmartRetrievalService smartRetrievalService,
+                              EmbeddingCacheService embeddingCacheService,
                               @org.springframework.beans.factory.annotation.Qualifier("ragQueryExecutor") 
                               ExecutorService ragQueryExecutor) {
         this.sessionMapper = sessionMapper;
@@ -66,6 +69,7 @@ public class RagChatServiceImpl implements RagChatService {
         this.embeddingModel = embeddingModel;
         this.chatClient = chatClient;
         this.smartRetrievalService = smartRetrievalService;
+        this.embeddingCacheService = embeddingCacheService;
         this.ragQueryExecutor = ragQueryExecutor;
     }
 
@@ -294,8 +298,8 @@ public class RagChatServiceImpl implements RagChatService {
                         new TypeReference<List<Long>>() {}
                 );
 
-                // 1. 将问题向量化
-                float[] qEmbedding = embeddingModel.embed(question);
+                // 1. 将问题向量化（高频问题走 Redis 缓存，命中跳过 embedding 调用）
+                float[] qEmbedding = embeddingCacheService.embedCached(embeddingModel, question);
                 String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
                 
                 // 2. 智能检索相关文档片段（双路检索：向量 + 关键词 + Rerank，按会话关联的知识库 ID 过滤）

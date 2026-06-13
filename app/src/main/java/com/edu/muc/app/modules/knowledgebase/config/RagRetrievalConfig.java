@@ -57,4 +57,22 @@ public class RagRetrievalConfig {
          */
         private int timeoutSeconds = 5;
     }
+
+    /**
+     * 高频问题向量缓存配置（"向量化前置"：问题哈希 → 向量）
+     */
+    private EmbeddingCache embeddingCache = new EmbeddingCache();
+
+    @Data
+    public static class EmbeddingCache {
+        /**
+         * 是否启用
+         */
+        private boolean enabled = true;
+
+        /**
+         * 缓存 TTL（秒）
+         */
+        private int ttlSeconds = 3600;
+    }
 }

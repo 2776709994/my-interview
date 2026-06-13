@@ -89,6 +89,10 @@ rag:
       url: ${RAG_RERANK_URL:https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank}
       model: ${RAG_RERANK_MODEL:gte-rerank-v2}
       timeout-seconds: ${RAG_RERANK_TIMEOUT:5}
+    # 高频问题向量缓存（向量化前置：问题哈希→向量，命中跳过 embedding 调用）
+    embedding-cache:
+      enabled: ${RAG_EMBEDDING_CACHE_ENABLED:true}
+      ttl-seconds: ${RAG_EMBEDDING_CACHE_TTL:3600}
 
 # 业务配置
 app:
