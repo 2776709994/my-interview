@@ -12,17 +12,15 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.function.Consumer;
 
 /**
  * Redis Stream PEL（Pending Entries List）恢复工具。
  * <p>
  * 消费者异常退出/处理失败后，消息会滞留在 PEL 中且不会被重新投递（XREADGROUP
- * 的 lastConsumed 只返回新消息）。本工具周期性将 idle 超过 {@link #MIN_IDLE} 且
- * 投递次数未超限的消息 claim 到当前消费者重新处理；投递次数超过 {@link #MAX_DELIVERY}
- * 的消息直接 ACK 放弃（等效死信），避免无限重试。
+ * 的 lastConsumed 只返回新消息）。本工具将 idle 超过 {@link #MIN_IDLE} 且
+ * 投递次数未超限的消息 claim 到当前消费者并返回，由调用方（消费者模板）按统一的
+ * 重试语义重新处理；投递次数超过 {@link #MAX_DELIVERY} 的消息直接 ACK 放弃
+ * （等效死信），避免无限重试。
  * </p>
  */
 @Slf4j
@@ -47,19 +45,17 @@ public class StreamPendingRecoverer {
     /**
      * 扫描并恢复指定 Stream 消费者组中的滞留消息。
      *
-     * @param streamKey     Stream Key
-     * @param group         消费者组
-     * @param consumerName  当前消费者名称（认领后消息归属该消费者）
-     * @param executor      处理消息用的线程池
-     * @param handler       消息处理回调（入参为消息字段 Map，处理成功返回即可）
+     * @param streamKey    Stream Key
+     * @param group        消费者组
+     * @param consumerName 当前消费者名称（认领后消息归属该消费者）
+     * @return 认领到的消息列表（由调用方按统一语义重新处理并 ACK）
      */
-    public void recover(String streamKey, String group, String consumerName,
-                        ExecutorService executor, Consumer<Map<Object, Object>> handler) {
+    public List<MapRecord<String, Object, Object>> recover(String streamKey, String group, String consumerName) {
         try {
             PendingMessages pending = redisTemplate.opsForStream()
                     .pending(streamKey, group, Range.unbounded(), SCAN_LIMIT);
             if (pending == null || pending.isEmpty()) {
-                return;
+                return List.of();
             }
 
             List<RecordId> toClaim = new ArrayList<>();
@@ -84,25 +80,27 @@ public class StreamPendingRecoverer {
                 redisTemplate.opsForStream().acknowledge(streamKey, group, toDiscard.toArray(new RecordId[0]));
             }
 
-            if (!toClaim.isEmpty()) {
-                log.info("[{}] 认领 {} 条超时未确认消息，重新处理", streamKey, toClaim.size());
-                List<MapRecord<String, Object, Object>> claimed = redisTemplate.opsForStream()
-                        .claim(streamKey, group, consumerName, MIN_IDLE, toClaim.toArray(new RecordId[0]));
-                for (MapRecord<String, Object, Object> record : claimed) {
-                    Map<Object, Object> fields = record.getValue();
-                    executor.submit(() -> {
-                        try {
-                            handler.accept(fields);
-                            redisTemplate.opsForStream().acknowledge(streamKey, group, record.getId());
-                        } catch (Exception e) {
-                            log.error("[{}] 认领消息处理失败，将留在 PEL 中等待下次认领，消息ID: {}",
-                                    streamKey, record.getId(), e);
-                        }
-                    });
+            if (toClaim.isEmpty()) {
+                return List.of();
+            }
+
+            log.info("[{}] 认领 {} 条超时未确认消息，重新处理", streamKey, toClaim.size());
+            List<MapRecord<String, Object, Object>> claimed = redisTemplate.opsForStream()
+                    .claim(streamKey, group, consumerName, MIN_IDLE, toClaim.toArray(new RecordId[0]));
+            // 消息体可能已被 XTRIM 裁剪（PEL 残留空消息），直接 ACK 清理
+            List<MapRecord<String, Object, Object>> valid = new ArrayList<>(claimed.size());
+            for (MapRecord<String, Object, Object> record : claimed) {
+                if (record.getValue() == null || record.getValue().isEmpty()) {
+                    log.warn("[{}] 认领到空消息体（可能已被裁剪），直接 ACK: {}", streamKey, record.getId());
+                    redisTemplate.opsForStream().acknowledge(streamKey, group, record.getId());
+                } else {
+                    valid.add(record);
                 }
             }
+            return valid;
         } catch (Exception e) {
             log.warn("[{}] PEL 恢复扫描失败: {}", streamKey, e.getMessage());
+            return List.of();
         }
     }
 }

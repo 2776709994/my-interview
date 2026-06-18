@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.edu.muc.app.common.JsonUtils;
 import com.edu.muc.app.common.ai.LlmProviderRegistry;
 import com.edu.muc.app.common.exception.BusinessException;
-import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
+import com.edu.muc.app.modules.interview.listener.EvaluateStreamProducer;
 import com.edu.muc.app.modules.interview.domain.InterviewAnswer;
 import com.edu.muc.app.modules.interview.domain.InterviewQuestion;
 import com.edu.muc.app.modules.interview.domain.InterviewSession;
@@ -54,7 +54,7 @@ public class InterviewServiceImpl implements InterviewService {
     private final InterviewQuestionMapper questionMapper;
     private final InterviewAnswerMapper answerMapper;
     private final ChatClient chatClient;
-    private final RedisStreamProducer streamProducer;
+    private final EvaluateStreamProducer streamProducer;
     private final ResumesMapper resumesMapper;
     private final LlmProviderRegistry llmProviderRegistry;
     private final SmartRetrievalService smartRetrievalService;
@@ -566,15 +566,12 @@ public class InterviewServiceImpl implements InterviewService {
             EvaluateStatus.FAILED.getCode().equals(evaluateStatus)) {
             
             // 异步触发评估
-            try {
-                streamProducer.sendInterviewEvaluationTask(sessionId);
-                log.info("📤 已发送评估任务到 Redis Stream: {}", sessionId);
-                session.setEvaluateStatus(EvaluateStatus.PENDING.getCode());
-                sessionMapper.updateById(session);
-            } catch (Exception e) {
-                log.error("❌ 发送评估任务失败", e);
-                throw new BusinessException("EVALUATION_TRIGGER_FAILED", "触发评估失败: " + e.getMessage());
+            if (!streamProducer.send(sessionId)) {
+                throw new BusinessException("EVALUATION_TRIGGER_FAILED", "评估任务入队失败，请稍后重试");
             }
+            log.info("📤 已发送评估任务到 Redis Stream: {}", sessionId);
+            session.setEvaluateStatus(EvaluateStatus.PENDING.getCode());
+            sessionMapper.updateById(session);
             
             // 重新加载
             session = sessionMapper.selectById(sessionId);
@@ -738,12 +735,11 @@ public class InterviewServiceImpl implements InterviewService {
         log.info("✅ 面试提前交卷: {}", sessionId);
         
         // 异步触发评估（通过 Redis Stream）
-        try {
-            streamProducer.sendInterviewEvaluationTask(sessionId);
-            log.info("📤 已发送评估任务到 Redis Stream: {}", sessionId);
-        } catch (Exception e) {
-            log.error("❌ 发送评估任务失败", e);
+        if (!streamProducer.send(sessionId)) {
+            log.error("❌ 发送评估任务失败: {}", sessionId);
             // 即使发送失败，也不影响交卷操作
+        } else {
+            log.info("📤 已发送评估任务到 Redis Stream: {}", sessionId);
         }
     }
 

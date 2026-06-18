@@ -1,161 +1,120 @@
 package com.edu.muc.app.modules.voiceinterview.listener;
 
+import com.edu.muc.app.common.async.AbstractStreamConsumer;
 import com.edu.muc.app.common.constant.AsyncTaskStreamConstants;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
 import com.edu.muc.app.infrastructure.redis.StreamPendingRecoverer;
+import com.edu.muc.app.modules.voiceinterview.model.VoiceInterviewSessionEntity;
 import com.edu.muc.app.modules.voiceinterview.service.VoiceInterviewEvaluationService;
 import com.edu.muc.app.modules.voiceinterview.service.VoiceInterviewService;
-import jakarta.annotation.PostConstruct;
-import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.connection.stream.*;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
-import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
 
 /**
- * 语音面试评估 Stream 消费者
- * 监听 Redis Stream: voice-interview:evaluation
+ * 语音面试评估 Stream 消费者（Redis Stream 模板方法实现）
+ * <p>
+ * 监听 Redis Stream: voice-interview:evaluation。
+ * 状态机：PENDING →（领取）→ PROCESSING → COMPLETED/FAILED（超过 3 次重试）。
+ * </p>
  */
 @Slf4j
 @Component
-public class VoiceEvaluateStreamConsumer {
+public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<Long> {
 
-    private final RedisTemplate<String, Object> redisTemplate;
     private final VoiceInterviewService voiceInterviewService;
     private final VoiceInterviewEvaluationService evaluationService;
-    private final ExecutorService executor;
-    private final StreamPendingRecoverer pendingRecoverer;
-
-    private static final String STREAM_KEY = AsyncTaskStreamConstants.VOICE_EVALUATE_STREAM_KEY;
-    private static final String GROUP = AsyncTaskStreamConstants.VOICE_EVALUATE_GROUP_NAME;
-
-    private Thread listenerThread;
+    private final ExecutorService evaluationExecutor;
 
     public VoiceEvaluateStreamConsumer(RedisTemplate<String, Object> redisTemplate,
+                                       StreamPendingRecoverer pendingRecoverer,
                                        VoiceInterviewService voiceInterviewService,
                                        VoiceInterviewEvaluationService evaluationService,
-                                       StreamPendingRecoverer pendingRecoverer,
-                                       @org.springframework.beans.factory.annotation.Qualifier("voiceEvaluationExecutor")
-                                       ExecutorService executor) {
-        this.redisTemplate = redisTemplate;
+                                       @Qualifier("voiceEvaluationExecutor") ExecutorService evaluationExecutor) {
+        super(redisTemplate, pendingRecoverer);
         this.voiceInterviewService = voiceInterviewService;
         this.evaluationService = evaluationService;
-        this.pendingRecoverer = pendingRecoverer;
-        this.executor = executor;
+        this.evaluationExecutor = evaluationExecutor;
     }
 
-    @PostConstruct
-    public void start() {
-        log.info("✅ Redis Stream 语音面试评估消费者已启动，开始监听 {}", STREAM_KEY);
-
-        try {
-            redisTemplate.opsForStream().createGroup(STREAM_KEY, GROUP);
-        } catch (Exception e) {
-            if (e.getMessage() == null || !e.getMessage().contains("BUSYGROUP")) {
-                log.warn("创建消费者组异常（可能已存在）: {}", e.getMessage());
-            }
-        }
-
-        String consumerName = AsyncTaskStreamConstants.VOICE_EVALUATE_CONSUMER_PREFIX
-                + java.util.UUID.randomUUID().toString().substring(0, 8);
-        listenerThread = new Thread(() -> {
-            int loopCount = 0;
-            while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    List<MapRecord<String, Object, Object>> messages = redisTemplate.opsForStream()
-                            .read(
-                                    Consumer.from(GROUP, consumerName),
-                                    StreamReadOptions.empty().block(Duration.ofSeconds(2)),
-                                    StreamOffset.create(STREAM_KEY, ReadOffset.lastConsumed())
-                            );
-
-                    if (messages != null && !messages.isEmpty()) {
-                        for (MapRecord<String, Object, Object> record : messages) {
-                            String sessionId = (String) record.getValue().get(AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID);
-                            RecordId recordId = record.getId();
-
-                            executor.submit(() -> {
-                                try {
-                                    processVoiceEvaluation(sessionId);
-                                    redisTemplate.opsForStream().acknowledge(STREAM_KEY, GROUP, recordId);
-                                } catch (Exception e) {
-                                    log.error("❌ 语音面试评估任务异常，消息将保留在 PEL 中等待恢复，sessionId: {}", sessionId, e);
-                                }
-                            });
-                        }
-                    }
-                } catch (org.springframework.data.redis.RedisConnectionFailureException e) {
-                    log.warn("⚠️ Redis 连接断开，5秒后重试... {}", e.getMessage());
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                } catch (Exception e) {
-                    log.error("❌ 监听 Redis Stream 异常", e);
-                    try {
-                        Thread.sleep(5000);
-                    } catch (InterruptedException ex) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-                // 每 15 轮（约 30 秒）扫描一次 PEL，恢复异常遗留的消息
-                if (++loopCount % 15 == 0) {
-                    pendingRecoverer.recover(STREAM_KEY, GROUP, consumerName, executor, fields -> {
-                        Object sessionId = fields.get(AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID);
-                        if (sessionId != null) {
-                            processVoiceEvaluation(sessionId.toString());
-                        }
-                    });
-                }
-            }
-            log.info("🛑 语音面试评估监听线程已退出");
-        }, "voice-evaluate-listener");
-
-        listenerThread.setDaemon(true);
-        listenerThread.start();
-        log.info("✅ 语音面试评估监听线程已启动: {}, 守护: {}", listenerThread.getName(), listenerThread.isDaemon());
+    @Override
+    protected ExecutorService executor() {
+        return evaluationExecutor;
     }
 
-    @PreDestroy
-    public void shutdown() {
-        log.info("🛑 开始关闭语音面试评估消费者...");
-        if (listenerThread != null && listenerThread.isAlive()) {
-            listenerThread.interrupt();
-        }
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+    @Override
+    protected String taskDisplayName() {
+        return "语音面试评估";
     }
 
-    /**
-     * 处理语音面试评估
-     */
-    private void processVoiceEvaluation(String sessionId) {
-        log.info("🚀 开始处理语音面试评估, sessionId: {}", sessionId);
-        Long sessionIdLong = Long.parseLong(sessionId);
+    @Override
+    protected String streamKey() {
+        return AsyncTaskStreamConstants.VOICE_EVALUATE_STREAM_KEY;
+    }
 
-        try {
-            voiceInterviewService.updateEvaluateStatus(sessionIdLong, AsyncTaskStatus.PROCESSING, null);
-            evaluationService.generateEvaluation(sessionIdLong);
-            voiceInterviewService.updateEvaluateStatus(sessionIdLong, AsyncTaskStatus.COMPLETED, null);
-            log.info("✅ 语音面试评估完成: sessionId={}", sessionId);
-        } catch (Exception e) {
-            log.error("❌ 语音面试评估失败, sessionId: {}", sessionId, e);
-            voiceInterviewService.updateEvaluateStatus(sessionIdLong, AsyncTaskStatus.FAILED, e.getMessage());
-        }
+    @Override
+    protected Map<String, String> buildMessage(Long sessionId) {
+        return Map.of(AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID, String.valueOf(sessionId));
+    }
+
+    @Override
+    protected String groupName() {
+        return AsyncTaskStreamConstants.VOICE_EVALUATE_GROUP_NAME;
+    }
+
+    @Override
+    protected String consumerPrefix() {
+        return AsyncTaskStreamConstants.VOICE_EVALUATE_CONSUMER_PREFIX;
+    }
+
+    @Override
+    protected String threadName() {
+        return "voice-evaluate-listener";
+    }
+
+    @Override
+    protected Long parsePayload(MapRecord<String, Object, Object> record) {
+        Object raw = record.getValue().get(AsyncTaskStreamConstants.FIELD_VOICE_SESSION_ID);
+        return raw == null ? null : Long.parseLong(raw.toString().trim());
+    }
+
+    @Override
+    protected String payloadIdentifier(Long sessionId) {
+        return "voiceSessionId=" + sessionId;
+    }
+
+    @Override
+    protected boolean shouldSkip(Long sessionId) {
+        // 已完成评估的会话跳过（幂等：重复投递不重复评估）
+        VoiceInterviewSessionEntity session = voiceInterviewService.getSession(sessionId);
+        return session != null && AsyncTaskStatus.COMPLETED.name().equals(session.getEvaluateStatus());
+    }
+
+    @Override
+    protected boolean tryMarkProcessing(Long sessionId) {
+        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.PROCESSING, null);
+        return true;
+    }
+
+    @Override
+    protected void processBusiness(Long sessionId) throws Exception {
+        evaluationService.generateEvaluation(sessionId);
+    }
+
+    @Override
+    protected void markCompleted(Long sessionId) {
+        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.COMPLETED, null);
+        log.info("✅ 语音面试评估完成: sessionId={}", sessionId);
+    }
+
+    @Override
+    protected void markFailed(Long sessionId, String error) {
+        log.error("❌ 语音面试评估最终失败: sessionId={}, 原因: {}", sessionId, error);
+        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.FAILED, error);
     }
 }

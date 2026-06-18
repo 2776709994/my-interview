@@ -21,6 +21,11 @@ public interface ResumesService extends IService<Resumes>{
 
     Resumes upload(MultipartFile file) throws Exception;
 
+    /**
+     * 重新分析简历：重置状态为 PENDING 后重新入队（已完成/失败的简历也可重新触发）
+     */
+    void reanalyze(Long id);
+
     Resumes getResume(Long id);
 
     List<ResumeListItemDTO> getList();

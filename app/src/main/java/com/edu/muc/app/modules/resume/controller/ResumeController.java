@@ -3,7 +3,6 @@ package com.edu.muc.app.modules.resume.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.edu.muc.app.common.Result;
-import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
 import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
@@ -25,8 +24,6 @@ import java.util.Map;
 public class ResumeController {
 
     private final ResumesService resumesService;
-    private final RedisStreamProducer streamProducer;
-
 
 
     /**
@@ -105,7 +102,7 @@ public class ResumeController {
      */
     @PostMapping("/{id}/reanalyze")
     public Result<Void> reanalyze(@PathVariable Long id) {
-        streamProducer.sendResumeAnalysisTask(String.valueOf(id));
+        resumesService.reanalyze(id);
         return Result.success(null);
 }
 

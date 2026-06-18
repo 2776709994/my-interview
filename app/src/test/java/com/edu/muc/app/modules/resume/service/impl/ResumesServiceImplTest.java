@@ -4,17 +4,18 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
+import com.edu.muc.app.modules.resume.listener.AnalyzeStreamProducer;
+import com.edu.muc.app.modules.resume.mapper.ResumeAnalysesMapper;
 import com.edu.muc.app.modules.resume.mapper.ResumesMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 
@@ -29,7 +30,16 @@ class ResumesServiceImplTest {
     private ResumesMapper resumesMapper;
 
     @Mock
+    private ResumeAnalysesMapper analysesMapper;
+
+    @Mock
     private FileStorageService fileStorageService;
+
+    @Mock
+    private ChatClient chatClient;
+
+    @Mock
+    private AnalyzeStreamProducer streamProducer;
 
     @InjectMocks
     private ResumesServiceImpl resumesService;
@@ -38,16 +48,12 @@ class ResumesServiceImplTest {
     private Resumes testResume;
 
     @BeforeEach
-    void setUp() throws IOException {
-        // 初始化 Mock 对象
-        MockitoAnnotations.openMocks(this);
-
-        // 准备模拟文件
+    void setUp() {
+        // 准备模拟文件（lenient：部分测试用例不会触发全部 stub）
         mockFile = mock(MultipartFile.class);
-        when(mockFile.getOriginalFilename()).thenReturn("test_resume.pdf");
-        when(mockFile.getContentType()).thenReturn("application/pdf");
-        when(mockFile.getSize()).thenReturn(1024L);
-        when(mockFile.getBytes()).thenReturn("dummy content".getBytes());
+        lenient().when(mockFile.getOriginalFilename()).thenReturn("test_resume.pdf");
+        lenient().when(mockFile.getContentType()).thenReturn("application/pdf");
+        lenient().when(mockFile.getSize()).thenReturn(1024L);
 
         // 准备模拟简历对象
         testResume = new Resumes();
@@ -60,6 +66,7 @@ class ResumesServiceImplTest {
     void testGetList_Success() {
         // 1. 准备数据
         when(resumesMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(Collections.singletonList(testResume));
+        when(analysesMapper.findLatestByResumeIds(any())).thenReturn(Collections.emptyList());
 
         // 2. 执行测试
         List<ResumeListItemDTO> result = resumesService.getList();
@@ -68,7 +75,7 @@ class ResumesServiceImplTest {
         assertNotNull(result);
         assertEquals(1, result.size());
         assertEquals("test_resume.pdf", result.get(0).getFilename());
-        
+
         // 验证 Mapper 是否被调用
         verify(resumesMapper, times(1)).selectList(any(LambdaQueryWrapper.class));
     }
@@ -84,7 +91,7 @@ class ResumesServiceImplTest {
 
         // 3. 验证结果
         assertTrue(result);
-        
+
         // 验证是否调用了 MinIO 删除
         verify(fileStorageService, times(1)).delete("resumes/test_resume.pdf");
         verify(resumesMapper, times(1)).deleteById(1L);

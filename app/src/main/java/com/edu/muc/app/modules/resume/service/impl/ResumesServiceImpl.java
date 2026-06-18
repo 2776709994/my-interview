@@ -5,8 +5,9 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.edu.muc.app.common.exception.BusinessException;
+import com.edu.muc.app.common.model.AsyncTaskStatus;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
-import com.edu.muc.app.infrastructure.redis.RedisStreamProducer;
+import com.edu.muc.app.modules.resume.listener.AnalyzeStreamProducer;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.domain.ResumeAnalyses;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
@@ -44,7 +45,7 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     implements ResumesService{
 
 
-    private final RedisStreamProducer streamProducer;
+    private final AnalyzeStreamProducer streamProducer;
     private final ResumesMapper resumesMapper;
     private final ResumeAnalysesMapper analysesMapper;
     private final FileStorageService fileStorageService;
@@ -58,6 +59,11 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     public Resumes upload(MultipartFile file) throws Exception {
         String storageKey = null;
         try {
+            // 0. 文件大小校验（防止超大文件打爆 MinIO 与 Tika 解析）
+            if (file.getSize() > 10 * 1024 * 1024L) {
+                throw new BusinessException("FILE_TOO_LARGE", "文件大小超过限制（最大10MB）");
+            }
+
             // 1. 计算文件的 MD5 哈希值
             String hash = calculateMD5(file);
 
@@ -66,8 +72,12 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
                     new LambdaQueryWrapper<Resumes>().eq(Resumes::getFileHash, hash));
 
             if (existing != null) {
-                // 已存在，直接对这条旧记录触发一次新的 AI 分析，然后返回它
-                streamProducer.sendResumeAnalysisTask(String.valueOf(existing.getId()));
+                // 已存在：重置状态后重新触发一次 AI 分析，然后返回旧记录
+                // （消费端状态守卫仅放行 PENDING/PROCESSING，需先回到 PENDING）
+                existing.setAnalyzeStatus(AsyncTaskStatus.PENDING.name());
+                existing.setAnalyzeError(null);
+                resumesMapper.updateById(existing);
+                streamProducer.send(existing.getId());
                 return existing;
             }
 
@@ -95,7 +105,7 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
                 @Override
                 public void afterCommit() {
                     try {
-                        streamProducer.sendResumeAnalysisTask(String.valueOf(newResumeId));
+                        streamProducer.send(newResumeId);
                     } catch (Exception e) {
                         log.error("❌ 事务提交后发送简历分析任务失败（可在前端手动重新分析）: {}", newResumeId, e);
                     }
@@ -115,6 +125,20 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
             }
             throw e;
         }
+    }
+
+    @Override
+    public void reanalyze(Long id) {
+        Resumes resume = resumesMapper.selectById(id);
+        if (resume == null) {
+            throw new BusinessException("RESUME_NOT_FOUND", "简历不存在");
+        }
+        // 消费端状态守卫仅放行 PENDING/PROCESSING，
+        // 已完成/失败的简历必须先重置回 PENDING 才能被重新领取
+        resume.setAnalyzeStatus(AsyncTaskStatus.PENDING.name());
+        resume.setAnalyzeError(null);
+        resumesMapper.updateById(resume);
+        streamProducer.send(id);
     }
 
     @Override

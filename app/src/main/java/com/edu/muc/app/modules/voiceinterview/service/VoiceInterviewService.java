@@ -117,7 +117,7 @@ public class VoiceInterviewService {
 
         endSession(session);
         // 入队失败时由调用方直接标记评估失败，避免前端一直停留在等待状态
-        if (voiceEvaluateStreamProducer.sendEvaluateTask(sessionId) == null) {
+        if (!voiceEvaluateStreamProducer.sendEvaluateTask(sessionId)) {
             updateEvaluateStatus(sessionIdLong, AsyncTaskStatus.FAILED, "评估任务入队失败");
         }
     }
