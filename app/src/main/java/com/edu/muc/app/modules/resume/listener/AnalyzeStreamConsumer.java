@@ -3,6 +3,7 @@ package com.edu.muc.app.modules.resume.listener;
 import com.edu.muc.app.common.async.AbstractStreamConsumer;
 import com.edu.muc.app.common.constant.AsyncTaskStreamConstants;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
+import com.edu.muc.app.infrastructure.file.DocumentParseService;
 import com.edu.muc.app.infrastructure.file.MinioFileStorageService;
 import com.edu.muc.app.infrastructure.redis.StreamPendingRecoverer;
 import com.edu.muc.app.modules.resume.domain.ResumeAnalyses;
@@ -44,6 +45,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
     private final ResumeAnalysesMapper analysesMapper;
     private final ChatClient chatClient;
     private final MinioFileStorageService fileStorageService;
+    private final DocumentParseService documentParseService;
     private final ExecutorService analysisExecutor;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -54,12 +56,14 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
                                  ResumeAnalysesMapper analysesMapper,
                                  MinioFileStorageService fileStorageService,
                                  ChatClient chatClient,
+                                 DocumentParseService documentParseService,
                                  @Qualifier("resumeAnalysisExecutor") ExecutorService analysisExecutor) {
         super(redisTemplate, pendingRecoverer);
         this.resumesMapper = resumesMapper;
         this.analysesMapper = analysesMapper;
         this.fileStorageService = fileStorageService;
         this.chatClient = chatClient;
+        this.documentParseService = documentParseService;
         this.analysisExecutor = analysisExecutor;
     }
 
@@ -234,8 +238,10 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         log.info("✅ 文件下载成功，字节数组长度: {} bytes", fileBytes.length);
 
         // CompletableFuture 实现超时控制，避免创建临时线程池
+        // 专业解析：PDF 禁用图片提取 + 按坐标排序、DOCX 禁用嵌入资源、正则清洗噪声
         CompletableFuture<String> future = CompletableFuture.supplyAsync(
-                () -> parseContent(fileBytes, resume.getOriginalFilename()), analysisExecutor);
+                () -> documentParseService.parseContent(fileBytes, resume.getOriginalFilename()),
+                analysisExecutor);
         try {
             text = future.get(30, TimeUnit.SECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
@@ -282,28 +288,4 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         }
     }
 
-    /**
-     * 解析文件内容（Tika 简化 API，自动检测格式）
-     */
-    private String parseContent(byte[] fileBytes, String fileName) {
-        log.info("开始解析文件: {}, 大小: {} bytes", fileName, fileBytes.length);
-        if (fileBytes == null || fileBytes.length == 0) {
-            return "";
-        }
-        long startTime = System.currentTimeMillis();
-        try (java.io.InputStream inputStream = new java.io.ByteArrayInputStream(fileBytes)) {
-            org.apache.tika.Tika tika = new org.apache.tika.Tika();
-            tika.setMaxStringLength(5 * 1024 * 1024);
-            String content = tika.parseToString(inputStream);
-            long elapsed = System.currentTimeMillis() - startTime;
-            log.info("✅ 文件解析成功，耗时: {} ms, 文本长度: {}", elapsed, content != null ? content.length() : 0);
-            if (content != null) {
-                content = content.replaceAll("\\s+", " ").trim();
-            }
-            return content;
-        } catch (Exception e) {
-            log.error("❌ Tika 解析失败: {}", e.getMessage(), e);
-            throw new RuntimeException("Tika 解析失败", e);
-        }
-    }
 }

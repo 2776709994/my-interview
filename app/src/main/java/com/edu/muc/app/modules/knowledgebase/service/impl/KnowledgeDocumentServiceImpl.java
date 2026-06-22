@@ -3,6 +3,8 @@ package com.edu.muc.app.modules.knowledgebase.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.edu.muc.app.common.JsonUtils;
+import com.edu.muc.app.infrastructure.file.DocumentParseService;
+import com.edu.muc.app.infrastructure.file.FileHashService;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
@@ -12,7 +14,6 @@ import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
 import com.edu.muc.app.modules.knowledgebase.service.KnowledgeDocumentService;
 import com.edu.muc.app.modules.knowledgebase.service.SmartRetrievalService;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.tika.Tika;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.core.io.DefaultResourceLoader;
@@ -22,7 +23,6 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,7 +42,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     private final KnowledgeDocumentMapper documentMapper;
     private final FileStorageService fileStorageService;
     private final EmbeddingModel embeddingModel;
-    private final Tika tika;
+    private final DocumentParseService documentParseService;
+    private final FileHashService fileHashService;
     private final ChatClient chatClient;
     private final ExecutorService executorService;
     private final SmartRetrievalService smartRetrievalService;
@@ -51,7 +52,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     public KnowledgeDocumentServiceImpl(KnowledgeDocumentMapper documentMapper,
                                         FileStorageService fileStorageService,
                                         EmbeddingModel embeddingModel,
-                                        Tika tika,
+                                        DocumentParseService documentParseService,
+                                        FileHashService fileHashService,
                                         ChatClient chatClient,
                                         @org.springframework.beans.factory.annotation.Qualifier("ragQueryExecutor") 
                                         ExecutorService executorService,
@@ -60,7 +62,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         this.documentMapper = documentMapper;
         this.fileStorageService = fileStorageService;
         this.embeddingModel = embeddingModel;
-        this.tika = tika;
+        this.documentParseService = documentParseService;
+        this.fileHashService = fileHashService;
         this.chatClient = chatClient;
         this.executorService = executorService;
         this.smartRetrievalService = smartRetrievalService;
@@ -72,9 +75,9 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     public KnowledgeDocument upload(MultipartFile file, String name, String category) throws Exception {
         String storageKey = null;
         try {
-            // 1. 计算 MD5 查重
-            String hash = calculateMD5(file);
-            log.info("🔍 文件 MD5: {}", hash);
+            // 1. 计算 SHA-256 查重（内容寻址，抗碰撞性优于 MD5）
+            String hash = fileHashService.calculateHash(file);
+            log.info("🔍 文件 SHA-256: {}", hash);
 
             // 1.1 查重：内容相同的文件直接返回已有父文档记录，不再重复解析与向量化
             KnowledgeDocument existing = documentMapper.selectOne(
@@ -84,7 +87,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                             .last("LIMIT 1")
             );
             if (existing != null) {
-                log.info("♻️ 知识库已存在相同文件（MD5: {}），返回已有记录 id={}", hash, existing.getId());
+                log.info("♻️ 知识库已存在相同文件（SHA-256: {}），返回已有记录 id={}", hash, existing.getId());
                 existing.setDuplicate(true);
                 return existing;
             }
@@ -94,8 +97,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             String storageUrl = fileStorageService.getFileUrl(storageKey);
             log.info("✅ 文件已上传到 MinIO: {}", storageKey);
 
-            // 3. 使用 Tika 解析文件内容
-            String content = tika.parseToString(file.getInputStream());
+            // 3. 使用专业文档解析（PDF 禁用图片提取/按坐标排序、DOCX 禁用嵌入资源、正则清洗噪声）
+            String content = documentParseService.parseContent(file);
             log.info("✅ 文件解析成功，内容长度: {}", content.length());
 
             // 4. 文本分块：每块约 800 字符，重叠 150 字符（约 19%）
@@ -478,19 +481,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         return chunks;
     }
 
-    /**
-     * 计算文件 MD5
-     */
-    private String calculateMD5(MultipartFile file) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        byte[] fileBytes = file.getBytes();
-        byte[] digest = md.digest(fileBytes);
-        StringBuilder sb = new StringBuilder();
-        for (byte b : digest) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
-    }
 
     /**
      * 实体转 DTO

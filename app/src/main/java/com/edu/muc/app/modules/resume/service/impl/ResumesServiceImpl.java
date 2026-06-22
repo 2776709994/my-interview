@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
+import com.edu.muc.app.infrastructure.file.FileHashService;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
 import com.edu.muc.app.modules.resume.listener.AnalyzeStreamProducer;
 import com.edu.muc.app.modules.resume.domain.Resumes;
@@ -24,8 +25,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
-import java.math.BigInteger;
-import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -49,6 +48,7 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     private final ResumesMapper resumesMapper;
     private final ResumeAnalysesMapper analysesMapper;
     private final FileStorageService fileStorageService;
+    private final FileHashService fileHashService;
     private final ChatClient chatClient;
     
     // 复用 ObjectMapper 实例，提升性能
@@ -64,8 +64,8 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
                 throw new BusinessException("FILE_TOO_LARGE", "文件大小超过限制（最大10MB）");
             }
 
-            // 1. 计算文件的 MD5 哈希值
-            String hash = calculateMD5(file);
+            // 1. 计算文件的 SHA-256 哈希值（内容寻址去重）
+            String hash = fileHashService.calculateHash(file);
 
             // 2. 检查数据库中是否已有相同哈希的简历（即内容相同的文件）
             Resumes existing = resumesMapper.selectOne(
@@ -336,12 +336,6 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     }
 
     // 计算文件的 MD5 哈希值
-    private String calculateMD5(MultipartFile file) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        byte[] digest = md.digest(file.getBytes());
-        BigInteger bigInt = new BigInteger(1, digest);
-        return String.format("%032x", bigInt);
-    }
 }
 
 
