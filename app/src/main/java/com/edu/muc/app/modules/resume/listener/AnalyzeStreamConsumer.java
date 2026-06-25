@@ -1,6 +1,8 @@
 package com.edu.muc.app.modules.resume.listener;
 
+import com.edu.muc.app.common.ai.StructuredOutputInvoker;
 import com.edu.muc.app.common.async.AbstractStreamConsumer;
+import com.edu.muc.app.common.exception.ErrorCode;
 import com.edu.muc.app.common.constant.AsyncTaskStreamConstants;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
 import com.edu.muc.app.infrastructure.file.DocumentParseService;
@@ -10,12 +12,13 @@ import com.edu.muc.app.modules.resume.domain.ResumeAnalyses;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.mapper.ResumeAnalysesMapper;
 import com.edu.muc.app.modules.resume.mapper.ResumesMapper;
+import com.edu.muc.app.modules.resume.model.ResumeAnalysisResponse;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.DefaultResourceLoader;
@@ -25,6 +28,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -46,9 +50,14 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
     private final ChatClient chatClient;
     private final MinioFileStorageService fileStorageService;
     private final DocumentParseService documentParseService;
+    private final StructuredOutputInvoker structuredOutputInvoker;
     private final ExecutorService analysisExecutor;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /** 结构化输出转换器：将大模型响应按 JSON Schema 反序列化为五维评分（线程安全，可静态复用） */
+    private static final BeanOutputConverter<ResumeAnalysisResponse> ANALYSIS_OUTPUT_CONVERTER =
+            new BeanOutputConverter<>(ResumeAnalysisResponse.class);
 
     public AnalyzeStreamConsumer(RedisTemplate<String, Object> redisTemplate,
                                  StreamPendingRecoverer pendingRecoverer,
@@ -57,6 +66,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
                                  MinioFileStorageService fileStorageService,
                                  ChatClient chatClient,
                                  DocumentParseService documentParseService,
+                                 StructuredOutputInvoker structuredOutputInvoker,
                                  @Qualifier("resumeAnalysisExecutor") ExecutorService analysisExecutor) {
         super(redisTemplate, pendingRecoverer);
         this.resumesMapper = resumesMapper;
@@ -64,6 +74,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         this.fileStorageService = fileStorageService;
         this.chatClient = chatClient;
         this.documentParseService = documentParseService;
+        this.structuredOutputInvoker = structuredOutputInvoker;
         this.analysisExecutor = analysisExecutor;
     }
 
@@ -166,36 +177,33 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         String userPrompt = userTemplate.render(Map.of("resumeText", text));
         log.info("📝 提示词模板加载完成，当前时间: {}, 用户提示词长度: {}", currentTime, userPrompt.length());
 
-        // 4. 调用 AI 分析（网络超时指数退避重试：2s/4s/8s）
+        // 4. 结构化输出：BeanOutputConverter 生成 JSON Schema 附加到系统提示，
+        //    StructuredOutputInvoker 统一调用与解析失败重试（含本地修复未转义引号）
         log.info("🤖 开始调用 AI 分析简历，简历ID: {}", resumeId);
-        String aiResponse = invokeAiWithRetry(systemPrompt, userPrompt);
-        log.info("✅ AI 分析完成，响应长度: {}", aiResponse != null ? aiResponse.length() : 0);
+        String systemPromptWithFormat = systemPrompt + "\n\n" + ANALYSIS_OUTPUT_CONVERTER.getFormat();
+        ResumeAnalysisResponse response = structuredOutputInvoker.invoke(
+                chatClient, systemPromptWithFormat, userPrompt, ANALYSIS_OUTPUT_CONVERTER,
+                ErrorCode.RESUME_ANALYSIS_FAILED, "简历分析结构化输出失败: ", "resume-analysis", log);
+        log.info("✅ AI 结构化分析完成: overallScore={}", response.overallScore());
 
-        // 5. 解析 JSON 并保存五维评分
-        String jsonStr = aiResponse.trim();
-        if (jsonStr.startsWith("```")) {
-            jsonStr = jsonStr.replaceAll("```json\\s*", "").replaceAll("```", "").trim();
+        // 5. 保存五维评分与改进建议
+        analysis.setOverallScore(response.overallScore());
+        ResumeAnalysisResponse.ScoreDetail detail = response.scoreDetail();
+        if (detail != null) {
+            analysis.setProjectScore(detail.projectScore());
+            analysis.setSkillMatchScore(detail.skillMatchScore());
+            analysis.setContentScore(detail.contentScore());
+            analysis.setStructureScore(detail.structureScore());
+            analysis.setExpressionScore(detail.expressionScore());
         }
-        JsonNode root = MAPPER.readTree(jsonStr);
-
-        int overallScore = root.path("overallScore").asInt(0);
-        String summary = root.path("summary").asText("");
-        JsonNode strengthsNode = root.has("strengths") ? root.get("strengths") : MAPPER.createArrayNode();
-        JsonNode suggestionsNode = root.has("suggestions") ? root.get("suggestions") : MAPPER.createArrayNode();
-        JsonNode scoreDetail = root.path("scoreDetail");
-
-        analysis.setOverallScore(overallScore);
-        analysis.setProjectScore(scoreDetail.path("projectScore").asInt(0));
-        analysis.setSkillMatchScore(scoreDetail.path("skillMatchScore").asInt(0));
-        analysis.setContentScore(scoreDetail.path("contentScore").asInt(0));
-        analysis.setStructureScore(scoreDetail.path("structureScore").asInt(0));
-        analysis.setExpressionScore(scoreDetail.path("expressionScore").asInt(0));
-        analysis.setSummary(summary);
-        analysis.setStrengthsJson(strengthsNode.toString());
-        analysis.setSuggestionsJson(suggestionsNode.toString());
+        analysis.setSummary(response.summary());
+        analysis.setStrengthsJson(MAPPER.writeValueAsString(
+                response.strengths() != null ? response.strengths() : List.of()));
+        analysis.setSuggestionsJson(MAPPER.writeValueAsString(
+                response.suggestions() != null ? response.suggestions() : List.of()));
         analysis.setAnalyzedAt(LocalDateTime.now());
         analysesMapper.updateById(analysis);
-        log.info("💾 分析结果已保存，简历ID: {}, 总分: {}", resumeId, overallScore);
+        log.info("💾 分析结果已保存，简历ID: {}, 总分: {}", resumeId, response.overallScore());
     }
 
     @Override
@@ -262,30 +270,5 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         return text;
     }
 
-    /**
-     * 调用 AI 分析，网络类异常指数退避重试 3 次
-     */
-    private String invokeAiWithRetry(String systemPrompt, String userPrompt) throws InterruptedException {
-        int maxRetries = 3;
-        int retryCount = 0;
-        while (true) {
-            try {
-                return chatClient.prompt()
-                        .system(systemPrompt)
-                        .user(userPrompt)
-                        .call()
-                        .content();
-            } catch (org.springframework.web.client.ResourceAccessException e) {
-                retryCount++;
-                if (retryCount >= maxRetries) {
-                    log.error("❌ AI 调用超时，已重试 {} 次，放弃", maxRetries);
-                    throw e;
-                }
-                long waitTime = 2000L * (long) Math.pow(2, retryCount - 1);
-                log.warn("⚠️ AI 调用超时，正在进行第 {} 次重试，等待 {} 秒...", retryCount, waitTime / 1000);
-                Thread.sleep(waitTime);
-            }
-        }
-    }
 
 }
