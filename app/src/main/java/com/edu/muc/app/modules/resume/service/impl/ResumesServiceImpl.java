@@ -14,6 +14,7 @@ import com.edu.muc.app.modules.resume.domain.ResumeAnalyses;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
 import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
 import com.edu.muc.app.modules.resume.mapper.ResumeAnalysesMapper;
+import com.edu.muc.app.modules.resume.converter.ResumeConverter;
 import com.edu.muc.app.modules.resume.service.ResumesService;
 import com.edu.muc.app.modules.resume.mapper.ResumesMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,6 +50,7 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     private final ResumeAnalysesMapper analysesMapper;
     private final FileStorageService fileStorageService;
     private final FileHashService fileHashService;
+    private final ResumeConverter resumeConverter;
     private final ChatClient chatClient;
     
     // 复用 ObjectMapper 实例，提升性能
@@ -247,26 +249,7 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     }
 
     private ResumeListItemDTO toListItemDTO(Resumes resume, ResumeAnalyses latestAnalysis) {
-        Integer latestScore = null;
-        LocalDateTime lastAnalyzedAt = null;
-
-        if (latestAnalysis != null) {
-            latestScore = latestAnalysis.getOverallScore();
-            lastAnalyzedAt = latestAnalysis.getAnalyzedAt();
-        }
-
-        return new ResumeListItemDTO(
-                resume.getId(),
-                resume.getOriginalFilename(),
-                resume.getFileSize() != null ? resume.getFileSize() : 0L,
-                resume.getUploadedAt() != null ? resume.getUploadedAt() : LocalDateTime.now(),
-                resume.getAccessCount() != null ? resume.getAccessCount() : 0,
-                latestScore,
-                lastAnalyzedAt,
-                0,
-                resume.getAnalyzeStatus() != null ? resume.getAnalyzeStatus() : "PENDING",
-                null
-        );
+        return resumeConverter.toListItemDTO(resume, latestAnalysis);
     }
 
 
@@ -281,53 +264,12 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
         // 2. 查所有分析结果（按时间倒序）
         List<ResumeAnalyses> analyses = analysesMapper.findByResumeId(id);
 
-        // 3. 组装 DTO
-        ResumeDetailDTO dto = new ResumeDetailDTO();
-        dto.setId(resume.getId());
-        dto.setFilename(resume.getOriginalFilename());
-        dto.setFileSize(resume.getFileSize() != null ? resume.getFileSize() : 0L);
-        dto.setContentType(resume.getContentType());
-        dto.setStorageUrl(resume.getStorageUrl());
-        dto.setUploadedAt(resume.getUploadedAt() != null ? resume.getUploadedAt() : LocalDateTime.now());
-        dto.setAccessCount(resume.getAccessCount() != null ? resume.getAccessCount() : 0);
-        dto.setResumeText(resume.getResumeText());
-        dto.setAnalyzeStatus(resume.getAnalyzeStatus() != null ? resume.getAnalyzeStatus() : "PENDING");
-        dto.setAnalyzeError(resume.getAnalyzeError());
+        // 3. 组装 DTO（MapStruct 编译期映射，null 值兜底由映射器处理）
+        ResumeDetailDTO dto = resumeConverter.toDetailDTO(resume);
 
-        // 4. 转换分析记录列表
+        // 4. 转换分析记录列表（MapStruct 编译期映射 + @AfterMapping 填充 JSON 字段）
         List<ResumeDetailDTO.AnalysisDTO> analysisDTOs = analyses.stream()
-                .map(analysis -> {
-                    ResumeDetailDTO.AnalysisDTO analysisDTO = new ResumeDetailDTO.AnalysisDTO();
-                    analysisDTO.setId(analysis.getId());
-                    analysisDTO.setOverallScore(analysis.getOverallScore());
-                    analysisDTO.setSkillMatchScore(analysis.getSkillMatchScore());
-                    analysisDTO.setStructureScore(analysis.getStructureScore());
-                    analysisDTO.setExpressionScore(analysis.getExpressionScore());
-                    analysisDTO.setProjectScore(analysis.getProjectScore());
-                    analysisDTO.setContentScore(analysis.getContentScore());
-                    analysisDTO.setSummary(analysis.getSummary());
-                    analysisDTO.setAnalyzedAt(analysis.getAnalyzedAt());
-
-                    // 解析 strengths JSON
-                    try {
-                        analysisDTO.setStrengths(OBJECT_MAPPER.readValue(analysis.getStrengthsJson(),
-                                new TypeReference<List<String>>() {}));
-                    } catch (Exception e) {
-                        log.warn("解析 strengths JSON 失败: {}", e.getMessage());
-                        analysisDTO.setStrengths(List.of());
-                    }
-
-                    // 解析 suggestions JSON
-                    try {
-                        analysisDTO.setSuggestions(OBJECT_MAPPER.readValue(analysis.getSuggestionsJson(),
-                                new TypeReference<List<ResumeDetailDTO.SuggestionDTO>>() {}));
-                    } catch (Exception e) {
-                        log.warn("解析 suggestions JSON 失败: {}", e.getMessage());
-                        analysisDTO.setSuggestions(List.of());
-                    }
-
-                    return analysisDTO;
-                })
+                .map(resumeConverter::toAnalysisDTO)
                 .toList();
 
         dto.setAnalyses(analysisDTOs);

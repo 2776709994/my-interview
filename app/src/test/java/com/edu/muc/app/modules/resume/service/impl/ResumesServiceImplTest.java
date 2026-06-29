@@ -1,9 +1,11 @@
 package com.edu.muc.app.modules.resume.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.edu.muc.app.infrastructure.file.FileHashService;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
+import com.edu.muc.app.modules.resume.converter.ResumeConverterImpl;
 import com.edu.muc.app.modules.resume.listener.AnalyzeStreamProducer;
 import com.edu.muc.app.modules.resume.mapper.ResumeAnalysesMapper;
 import com.edu.muc.app.modules.resume.mapper.ResumesMapper;
@@ -41,8 +43,18 @@ class ResumesServiceImplTest {
     @Mock
     private AnalyzeStreamProducer streamProducer;
 
-    @InjectMocks
+    @Mock
+    private FileHashService fileHashService;
+
     private ResumesServiceImpl resumesService;
+
+    @BeforeEach
+    void initService() {
+        // 手动装配：MapStruct 生成的转换器为真实实现，保证列表映射行为可验证
+        resumesService = new ResumesServiceImpl(
+                streamProducer, resumesMapper, analysesMapper, fileStorageService,
+                fileHashService, new ResumeConverterImpl(), chatClient);
+    }
 
     private MultipartFile mockFile;
     private Resumes testResume;
