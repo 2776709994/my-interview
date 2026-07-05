@@ -1,12 +1,18 @@
 package com.edu.muc.app.modules.interview.controller;
 
 import com.edu.muc.app.common.Result;
+import com.edu.muc.app.infrastructure.export.PdfExportService;
 import com.edu.muc.app.modules.interview.dto.*;
 import com.edu.muc.app.modules.interview.service.InterviewService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Slf4j
@@ -16,6 +22,7 @@ import java.util.List;
 public class InterviewController {
 
     private final InterviewService interviewService;
+    private final PdfExportService pdfExportService;
 
     /**
      * 获取技能标签列表（用于选择面试方向）
@@ -142,6 +149,21 @@ public class InterviewController {
     public Result<InterviewReportDTO> getReport(@PathVariable String sessionId) {
         InterviewReportDTO report = interviewService.getReport(sessionId);
         return Result.success(report);
+    }
+
+    /**
+     * 导出面试评估报告 PDF（iText 8）
+     */
+    @GetMapping("/sessions/{sessionId}/report/export")
+    public ResponseEntity<byte[]> exportReport(@PathVariable String sessionId) {
+        InterviewReportDTO report = interviewService.getReport(sessionId);
+        byte[] pdf = pdfExportService.exportInterviewReport(report);
+        String filename = URLEncoder.encode("面试评估报告.pdf", StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename*=UTF-8''" + filename)
+                .body(pdf);
     }
 
     /**

@@ -3,16 +3,23 @@ package com.edu.muc.app.modules.resume.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.edu.muc.app.common.Result;
+import com.edu.muc.app.common.exception.BusinessException;
+import com.edu.muc.app.infrastructure.export.PdfExportService;
 import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.edu.muc.app.modules.resume.dto.ResumeDetailDTO;
 import com.edu.muc.app.modules.resume.dto.ResumeListItemDTO;
 import com.edu.muc.app.modules.resume.service.ResumesService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -24,6 +31,7 @@ import java.util.Map;
 public class ResumeController {
 
     private final ResumesService resumesService;
+    private final PdfExportService pdfExportService;
 
 
     /**
@@ -94,6 +102,25 @@ public class ResumeController {
         }
     }
 
+
+    /**
+     * 导出最新简历分析报告 PDF（iText 8）
+     */
+    @GetMapping("/{id}/report/export")
+    public ResponseEntity<byte[]> exportAnalysisReport(@PathVariable Long id) {
+        ResumeDetailDTO detail = resumesService.getDetail(id);
+        ResumeDetailDTO.AnalysisDTO latest = detail.getAnalyses().stream()
+                .max(Comparator.comparing(ResumeDetailDTO.AnalysisDTO::getAnalyzedAt,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .orElseThrow(() -> new BusinessException("RESUME_ANALYSIS_NOT_FOUND", "暂无分析结果，请先完成分析"));
+        byte[] pdf = pdfExportService.exportResumeAnalysis(detail.getFilename(), latest);
+        String filename = URLEncoder.encode("简历分析报告.pdf", StandardCharsets.UTF_8);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename*=UTF-8''" + filename)
+                .body(pdf);
+    }
 
     /**
      * 重新分析简历
