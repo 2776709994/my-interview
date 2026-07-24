@@ -62,6 +62,8 @@ TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分�
 | Apache Tika | 2.9.2 | 文档内容解析（PDF/Word/TXT） |
 | DashScope SDK | 2.22.7 | 语音识别/合成（Qwen3 ASR/TTS Realtime） |
 | WebSocket | - | 语音面试实时双向通信 |
+| iText 8 | 8.0.5 | 报告 PDF 导出（面试评估/简历分析，内嵌中文字体） |
+| MapStruct | 1.6.3 | 编译期对象映射（零反射开销） |
 | Lombok | - | 代码简化 |
 
 ### 前端
@@ -298,7 +300,9 @@ cd app
 4. 结构清晰度（15 分）：格式规范
 5. 表达专业性（10 分）：语言精炼度
 
-**特性**：MD5 去重、30 秒解析超时、AI 调用 3 次指数退避重试、分析状态机（PENDING/PROCESSING/COMPLETED/FAILED）。
+**特性**：SHA-256 内容寻址去重、10MB 大小校验、Tika 专业解析（PDF 禁用图片提取/按坐标排序、DOCX 禁用嵌入资源）+ 正则清洗噪声、Spring AI 结构化输出（BeanOutputConverter）生成五维评分与改进建议、MapStruct 编译期映射、30 秒解析超时、分析状态机（PENDING/PROCESSING/COMPLETED/FAILED，失败自动重试 3 次）。
+
+**导出**：`GET /api/resumes/{id}/report/export` 导出最新分析报告 PDF（iText 8）。
 
 ### 2. 面试模块（Interview）
 
@@ -311,7 +315,8 @@ cd app
 2. 白卷处理：未答题时生成建设性的零分报告
 3. 多维度报告：总分 + 优点 + 改进项 + 分类评分 + 参考答案
 4. topicSummary 去重：避免历史面试中重复出题
-5. **RAG 打通**：创建会话时可关联知识库，出题时对简历+JD 做向量化查询，从知识库检索相关片段注入提示词的 `referenceSection`，让面试题更贴合你的知识库资料（检索失败自动降级，不影响出题）
+5. 报告导出：`GET /api/interview/sessions/{id}/report/export` 导出评估报告 PDF（iText 8，内嵌中文字体）
+6. **RAG 打通**：创建会话时可关联知识库，出题时对简历+JD 做向量化查询，从知识库检索相关片段注入提示词的 `referenceSection`，让面试题更贴合你的知识库资料（检索失败自动降级，不影响出题）
 
 ### 3. 语音面试模块（VoiceInterview）
 
