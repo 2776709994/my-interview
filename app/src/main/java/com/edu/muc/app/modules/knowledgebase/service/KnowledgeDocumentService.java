@@ -78,4 +78,9 @@ public interface KnowledgeDocumentService {
      * @param id 文档 ID
      */
     void revectorize(Long id);
+
+    /**
+     * 对父文档执行向量化：分块 → Embedding → 子文档入库（由向量消费者异步调用）
+     */
+    void vectorizeDocument(Long parentId);
 }

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.edu.muc.app.common.JsonUtils;
 import com.edu.muc.app.infrastructure.file.DocumentParseService;
 import com.edu.muc.app.infrastructure.file.FileHashService;
+import com.edu.muc.app.modules.knowledgebase.listener.VectorizeStreamProducer;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.infrastructure.file.FileStorageService;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
@@ -19,6 +20,8 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -48,6 +51,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     private final ExecutorService executorService;
     private final SmartRetrievalService smartRetrievalService;
     private final EmbeddingCacheService embeddingCacheService;
+    private final VectorizeStreamProducer vectorizeStreamProducer;
 
     public KnowledgeDocumentServiceImpl(KnowledgeDocumentMapper documentMapper,
                                         FileStorageService fileStorageService,
@@ -58,7 +62,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                                         @org.springframework.beans.factory.annotation.Qualifier("ragQueryExecutor") 
                                         ExecutorService executorService,
                                         SmartRetrievalService smartRetrievalService,
-                                        EmbeddingCacheService embeddingCacheService) {
+                                        EmbeddingCacheService embeddingCacheService,
+                                        VectorizeStreamProducer vectorizeStreamProducer) {
         this.documentMapper = documentMapper;
         this.fileStorageService = fileStorageService;
         this.embeddingModel = embeddingModel;
@@ -68,6 +73,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         this.executorService = executorService;
         this.smartRetrievalService = smartRetrievalService;
         this.embeddingCacheService = embeddingCacheService;
+        this.vectorizeStreamProducer = vectorizeStreamProducer;
     }
 
     @Override
@@ -101,10 +107,6 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             String content = documentParseService.parseContent(file);
             log.info("✅ 文件解析成功，内容长度: {}", content.length());
 
-            // 4. 文本分块：每块约 800 字符，重叠 150 字符（约 19%）
-            List<String> chunks = splitTextIntoChunks(content, 800);
-            log.info("✅ 文本已分块，共 {} 块", chunks.size());
-
             // 5. 创建父文档记录（存储完整内容和元数据）
             KnowledgeDocument parentDoc = new KnowledgeDocument();
             parentDoc.setName(name != null ? name : extractTitle(file.getOriginalFilename()));
@@ -116,12 +118,11 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             parentDoc.setStorageKey(storageKey);
             parentDoc.setStorageUrl(storageUrl);
             parentDoc.setFileHash(hash);
-            parentDoc.setVectorStatus("COMPLETED");
-            parentDoc.setChunkCount(chunks.size());
+            parentDoc.setVectorStatus("PENDING");
+            parentDoc.setChunkCount(0);
             parentDoc.setQuestionCount(0);
             parentDoc.setAccessCount(0);
             parentDoc.setUploadedAt(LocalDateTime.now());
-            parentDoc.setProcessedAt(LocalDateTime.now());
             parentDoc.setParentId(null);  // 父文档
             parentDoc.setChunkIndex(-1);   // 未分块标记
 
@@ -130,40 +131,18 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             Long parentId = parentDoc.getId();
             log.info("✅ 父文档入库成功，ID: {}", parentId);
 
-            // 6. 为每个 chunk 创建子文档并生成向量
-            for (int i = 0; i < chunks.size(); i++) {
-                String chunk = chunks.get(i);
-                
-                // 生成该 chunk 的向量
-                float[] embedding = embeddingModel.embed(chunk);
-                String embeddingJson = JsonUtils.convertEmbeddingToJson(embedding);
-                
-                // 创建子文档
-                KnowledgeDocument chunkDoc = new KnowledgeDocument();
-                chunkDoc.setName(parentDoc.getName() + " - 片段 " + (i + 1));
-                chunkDoc.setCategory(category);
-                chunkDoc.setFileName(file.getOriginalFilename());
-                chunkDoc.setContent(chunk);  // 只存储当前 chunk 的内容
-                chunkDoc.setContentEmbedding(embeddingJson);
-                chunkDoc.setFileSize(file.getSize());
-                chunkDoc.setContentType(file.getContentType());
-                chunkDoc.setStorageKey(storageKey);
-                chunkDoc.setStorageUrl(storageUrl);
-                chunkDoc.setVectorStatus("COMPLETED");
-                chunkDoc.setChunkCount(1);
-                chunkDoc.setQuestionCount(0);
-                chunkDoc.setAccessCount(0);
-                chunkDoc.setUploadedAt(LocalDateTime.now());
-                chunkDoc.setProcessedAt(LocalDateTime.now());
-                chunkDoc.setParentId(parentId);  // 关联父文档
-                chunkDoc.setChunkIndex(i);        // 分块索引
+            // 关键时序：必须在事务提交（afterCommit）后再入队，防止消费端读到未提交行
+            // 分块 → Embedding → 子文档入库由向量消费者异步完成（接口入队即返回，前端轮询 vectorStatus）
+            final Long docId = parentId;
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    if (!vectorizeStreamProducer.send(docId)) {
+                        log.error("❌ 文档向量化任务入队失败（已标记 FAILED，可手动重新向量化）: {}", docId);
+                    }
+                }
+            });
 
-                // 插入子文档
-                documentMapper.insertVectorDocument(chunkDoc);
-                log.info("✅ 子文档 {} 入库成功，ID: {}", i + 1, chunkDoc.getId());
-            }
-
-            log.info("✅ 知识文档及 {} 个分块全部入库成功", chunks.size());
             return parentDoc;
         } catch (Exception e) {
             // 发生异常时，回滚数据库操作，并清理已上传的 MinIO 文件
@@ -406,6 +385,57 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         return fileName.substring(0, fileName.lastIndexOf("."));
     }
 
+    @Override
+    public void vectorizeDocument(Long parentId) {
+        KnowledgeDocument document = documentMapper.selectById(parentId);
+        if (document == null) {
+            throw new IllegalStateException("知识文档不存在: " + parentId);
+        }
+        String content = document.getContent();
+        if (content == null || content.isEmpty()) {
+            throw new IllegalStateException("文档内容为空，无法向量化: " + parentId);
+        }
+
+        // 文本分块：每块约 800 字符，重叠 150 字符（约 19%）
+        List<String> chunks = splitTextIntoChunks(content, 800);
+        log.info("✅ 文本已分块，共 {} 块: kbId={}", chunks.size(), parentId);
+
+        // 为每个 chunk 创建子文档并生成向量（Embedding 调用为 IO 密集型，运行在虚拟线程）
+        for (int i = 0; i < chunks.size(); i++) {
+            String chunk = chunks.get(i);
+
+            float[] embedding = embeddingModel.embed(chunk);
+            String embeddingJson = JsonUtils.convertEmbeddingToJson(embedding);
+
+            KnowledgeDocument chunkDoc = new KnowledgeDocument();
+            chunkDoc.setName(document.getName() + " - 片段 " + (i + 1));
+            chunkDoc.setCategory(document.getCategory());
+            chunkDoc.setFileName(document.getFileName());
+            chunkDoc.setContent(chunk);
+            chunkDoc.setContentEmbedding(embeddingJson);
+            chunkDoc.setFileSize(document.getFileSize());
+            chunkDoc.setContentType(document.getContentType());
+            chunkDoc.setStorageKey(document.getStorageKey());
+            chunkDoc.setStorageUrl(document.getStorageUrl());
+            chunkDoc.setVectorStatus("COMPLETED");
+            chunkDoc.setChunkCount(1);
+            chunkDoc.setQuestionCount(0);
+            chunkDoc.setAccessCount(0);
+            chunkDoc.setUploadedAt(LocalDateTime.now());
+            chunkDoc.setProcessedAt(LocalDateTime.now());
+            chunkDoc.setParentId(parentId);
+            chunkDoc.setChunkIndex(i);
+
+            documentMapper.insertVectorDocument(chunkDoc);
+        }
+
+        // 更新父文档分块数（终态 COMPLETED 由消费者 markCompleted 统一落库）
+        document.setChunkCount(chunks.size());
+        documentMapper.updateById(document);
+        log.info("✅ 文档向量化处理完成，共 {} 个分块: kbId={}", chunks.size(), parentId);
+    }
+
+
     /**
      * 智能文本分块（优化版）
      * @param text 原始文本
@@ -517,80 +547,27 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         }
         
         log.info("🔄 开始重新向量化文档: {}", id);
-        
+
         // 1. 删除旧的子文档（分块）
         documentMapper.delete(
                 new LambdaQueryWrapper<KnowledgeDocument>()
                         .eq(KnowledgeDocument::getParentId, id)
         );
         log.info("✅ 已删除旧的分块");
-        
-        // 2. 更新父文档状态为 PROCESSING
-        document.setVectorStatus("PROCESSING");
+
+        // 2. 重置父文档状态为 PENDING（消费端状态守卫要求）
+        document.setVectorStatus("PENDING");
         document.setVectorError(null);
         documentMapper.updateById(document);
-        
-        // 3. 异步重新处理（在后台线程中执行）
-        CompletableFuture.runAsync(() -> {
-            try {
-                String content = document.getContent();
-                if (content == null || content.isEmpty()) {
-                    log.error("文档内容为空，无法重新向量化，id: {}", id);
-                    document.setVectorStatus("FAILED");
-                    document.setVectorError("文档内容为空");
-                    documentMapper.updateById(document);
-                    return;
+
+        // 3. 事务提交后经 Redis Stream 异步向量化（自动重试 3 次，前端轮询 vectorStatus）
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                if (!vectorizeStreamProducer.send(id)) {
+                    log.error("❌ 重新向量化任务入队失败（已标记 FAILED）: {}", id);
                 }
-                
-                // 重新分块
-                List<String> chunks = splitTextIntoChunks(content, 800);
-                log.info("✅ 文本已重新分块，共 {} 块", chunks.size());
-                
-                // 为每个 chunk 创建子文档并生成向量
-                for (int i = 0; i < chunks.size(); i++) {
-                    String chunk = chunks.get(i);
-                    
-                    // 生成该 chunk 的向量
-                    float[] embedding = embeddingModel.embed(chunk);
-                    String embeddingJson = JsonUtils.convertEmbeddingToJson(embedding);
-                    
-                    // 创建子文档
-                    KnowledgeDocument chunkDoc = new KnowledgeDocument();
-                    chunkDoc.setName(document.getName() + " - 片段 " + (i + 1));
-                    chunkDoc.setCategory(document.getCategory());
-                    chunkDoc.setFileName(document.getFileName());
-                    chunkDoc.setContent(chunk);
-                    chunkDoc.setContentEmbedding(embeddingJson);
-                    chunkDoc.setFileSize(document.getFileSize());
-                    chunkDoc.setContentType(document.getContentType());
-                    chunkDoc.setStorageKey(document.getStorageKey());
-                    chunkDoc.setStorageUrl(document.getStorageUrl());
-                    chunkDoc.setVectorStatus("COMPLETED");
-                    chunkDoc.setChunkCount(1);
-                    chunkDoc.setQuestionCount(0);
-                    chunkDoc.setAccessCount(0);
-                    chunkDoc.setUploadedAt(LocalDateTime.now());
-                    chunkDoc.setProcessedAt(LocalDateTime.now());
-                    chunkDoc.setParentId(id);
-                    chunkDoc.setChunkIndex(i);
-                    
-                    documentMapper.insertVectorDocument(chunkDoc);
-                }
-                
-                // 4. 更新父文档状态
-                document.setVectorStatus("COMPLETED");
-                document.setChunkCount(chunks.size());
-                document.setProcessedAt(LocalDateTime.now());
-                documentMapper.updateById(document);
-                
-                log.info("✅ 重新向量化完成，共 {} 个分块", chunks.size());
-            } catch (Exception e) {
-                log.error("❌ 重新向量化失败", e);
-                // 更新父文档状态为 FAILED
-                document.setVectorStatus("FAILED");
-                document.setVectorError(e.getMessage());
-                documentMapper.updateById(document);
             }
-        }, executorService);
+        });
     }
 }
