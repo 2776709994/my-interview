@@ -341,7 +341,9 @@ cd app
 
 ### 5. 知识库模块（KnowledgeBase）
 
-**流程**：上传文档 → Tika 解析 → 智能分块（800 字符/块，150 字符重叠）→ 向量化（1024 维）→ pgvector 存储 → 余弦相似度检索
+**流程**：上传文档 → Tika 解析（入队即返回）→ Redis Stream 异步 → 智能分块（800 字符/块，150 字符重叠）→ 向量化（1024 维）→ pgvector 存储 → 余弦相似度检索
+
+**异步向量化**：上传/重新向量化经 Redis Stream 消费者组 + ACK 解耦（自动重试 3 次），文档状态机 PENDING→PROCESSING→COMPLETED/FAILED，前端轮询 `vectorStatus` 展示进度。
 
 **父子文档设计**：
 - 父文档：存储完整内容，`parent_id = NULL`
