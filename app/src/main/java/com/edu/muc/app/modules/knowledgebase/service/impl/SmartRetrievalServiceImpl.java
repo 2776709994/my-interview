@@ -72,7 +72,13 @@ public class SmartRetrievalServiceImpl implements SmartRetrievalService {
             if (keyword.length() > KEYWORD_MAX_LEN) {
                 keyword = keyword.substring(0, KEYWORD_MAX_LEN);
             }
-            keywordCandidates = documentMapper.searchByKeyword(keyword, initialTopK, knowledgeBaseIds);
+            try {
+                keywordCandidates = documentMapper.searchByKeyword(keyword, initialTopK, knowledgeBaseIds);
+            } catch (Exception e) {
+                // 降级：关键词路失败（如 pg_trgm 扩展缺失）不影响向量路检索，
+                // RRF 融合天然支持单路候选（缺一路时按另一路排名融合）
+                log.warn("⚠️ 关键词路召回失败，仅用向量路结果: {}", e.getMessage());
+            }
             log.info("🔍 关键词路召回 {} 个候选", keywordCandidates.size());
         }
 

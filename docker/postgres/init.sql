@@ -1,5 +1,7 @@
 -- 启用 pgvector 扩展（用于 RAG 知识库向量检索）
 CREATE EXTENSION IF NOT EXISTS vector;
+-- 关键词检索路（pg_trgm 三元组）：提供 word_similarity() 与 GIN 索引加速
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- 知识文档表
 CREATE TABLE IF NOT EXISTS knowledge_documents (
@@ -34,6 +36,8 @@ USING hnsw (content_embedding vector_cosine_ops);
 
 -- 文件哈希索引（MD5 查重）
 CREATE INDEX IF NOT EXISTS idx_knowledge_doc_file_hash ON knowledge_documents(file_hash);
+CREATE INDEX IF NOT EXISTS idx_knowledge_doc_content_trgm
+    ON knowledge_documents USING gin (content gin_trgm_ops);
 
 -- 简历表
 CREATE TABLE IF NOT EXISTS resumes (
