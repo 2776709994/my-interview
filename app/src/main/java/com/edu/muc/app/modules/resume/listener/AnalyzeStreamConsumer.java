@@ -154,9 +154,13 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         // 1. 提取文本（缺失时从 MinIO 下载并解析；失败抛异常走自动重试）
         String text = ensureResumeText(resume);
 
-        // 2. 获取分析记录（重试时复用已有记录，避免重复插入）
+        // 2. 获取分析记录（简历允许多次分析产生多条记录，取最近一条复用，避免重复插入；
+        //    直接 selectOne 在多条历史记录下会抛 TooManyResultsException）
         ResumeAnalyses analysis = analysesMapper.selectOne(
-                new LambdaQueryWrapper<ResumeAnalyses>().eq(ResumeAnalyses::getResumeId, resumeId));
+                new LambdaQueryWrapper<ResumeAnalyses>()
+                        .eq(ResumeAnalyses::getResumeId, resumeId)
+                        .orderByDesc(ResumeAnalyses::getAnalyzedAt)
+                        .last("LIMIT 1"));
         if (analysis == null) {
             analysis = new ResumeAnalyses();
             analysis.setResumeId(resumeId);

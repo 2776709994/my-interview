@@ -50,6 +50,12 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<Long> {
     }
 
     @Override
+    protected boolean ownsExecutor() {
+        // ragQueryExecutor 与知识库查询/RAG 聊天共享，关闭生命周期由 Spring 管理，不在此关闭
+        return false;
+    }
+
+    @Override
     protected String taskDisplayName() {
         return "文档向量化";
     }

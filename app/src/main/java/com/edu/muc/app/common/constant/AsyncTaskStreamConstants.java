@@ -2,8 +2,7 @@ package com.edu.muc.app.common.constant;
 
 /**
  * 异步任务 Redis Stream 通用常量
- * 包含简历分析、面试评估、语音面试评估三个异步任务的配置。
- * 注意：知识库向量化 Stream（KB_VECTORIZE_*）为预留设计，当前未实现。
+ * 包含简历分析、知识库向量化、面试评估、语音面试评估四个异步任务的配置。
  */
 public final class AsyncTaskStreamConstants {
 
@@ -45,7 +44,7 @@ public final class AsyncTaskStreamConstants {
      */
     public static final int STREAM_MAX_LEN = 1000;
 
-    // ========== 知识库向量化 Stream 配置（预留，未实现） ==========
+    // ========== 知识库向量化 Stream 配置 ==========
 
     /**
      * 知识库向量化 Stream Key
@@ -68,7 +67,7 @@ public final class AsyncTaskStreamConstants {
     public static final String FIELD_KB_ID = "kbId";
 
     // ========== 简历分析 Stream 配置 ==========
-    // 注意：以下 key/group 与实现（ResumeAnalysisConsumer）保持一致
+    // 注意：以下 key/group 与实现（AnalyzeStreamConsumer）保持一致
 
     /**
      * 简历分析 Stream Key
@@ -91,7 +90,7 @@ public final class AsyncTaskStreamConstants {
     public static final String FIELD_RESUME_ID = "resumeId";
 
     // ========== 面试评估 Stream 配置 ==========
-    // 注意：以下 key/group 与实现（InterviewEvaluationConsumer）保持一致
+    // 注意：以下 key/group 与实现（EvaluateStreamConsumer）保持一致
 
     /**
      * 面试评估 Stream Key

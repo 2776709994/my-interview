@@ -73,23 +73,34 @@ public abstract class AbstractStreamConsumer<T> {
                 taskDisplayName(), streamKey(), groupName(), consumerName);
     }
 
+    /**
+     * 是否由模板在 {@link #shutdown()} 中关闭 {@link #executor()}。
+     * 专属线程池返回 true；与其他组件共享的线程池必须返回 false，
+     * 避免关闭自身时连带终止其他组件的在途任务。
+     */
+    protected boolean ownsExecutor() {
+        return true;
+    }
+
     @PreDestroy
     public void shutdown() {
         running.set(false);
         if (consumerThread != null && consumerThread.isAlive()) {
             consumerThread.interrupt();
         }
-        ExecutorService executor = executor();
-        if (executor != null) {
-            executor.shutdown();
-            try {
-                if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
-                    log.warn("{} consumer executor未在60秒内结束，强制关闭", taskDisplayName());
+        if (ownsExecutor()) {
+            ExecutorService executor = executor();
+            if (executor != null) {
+                executor.shutdown();
+                try {
+                    if (!executor.awaitTermination(60, TimeUnit.SECONDS)) {
+                        log.warn("{} consumer executor未在60秒内结束，强制关闭", taskDisplayName());
+                        executor.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
                     executor.shutdownNow();
+                    Thread.currentThread().interrupt();
                 }
-            } catch (InterruptedException e) {
-                executor.shutdownNow();
-                Thread.currentThread().interrupt();
             }
         }
         log.info("{} consumer stopped: consumerName={}", taskDisplayName(), consumerName);
