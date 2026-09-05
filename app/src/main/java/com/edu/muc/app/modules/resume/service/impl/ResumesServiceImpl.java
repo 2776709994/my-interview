@@ -74,6 +74,12 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
                     new LambdaQueryWrapper<Resumes>().eq(Resumes::getFileHash, hash));
 
             if (existing != null) {
+                // 正在分析中：不重复入队（状态守卫放行 PROCESSING 会导致并发双跑、重复消耗 AI 调用），
+                // 直接返回旧记录，等待在途任务完成
+                if (AsyncTaskStatus.PROCESSING.name().equals(existing.getAnalyzeStatus())) {
+                    log.info("⏳ 简历正在分析中，跳过重复触发: resumeId={}", existing.getId());
+                    return existing;
+                }
                 // 已存在：重置状态后重新触发一次 AI 分析，然后返回旧记录
                 // （消费端状态守卫仅放行 PENDING/PROCESSING，需先回到 PENDING）
                 existing.setAnalyzeStatus(AsyncTaskStatus.PENDING.name());
@@ -134,6 +140,10 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
         Resumes resume = resumesMapper.selectById(id);
         if (resume == null) {
             throw new BusinessException("RESUME_NOT_FOUND", "简历不存在");
+        }
+        // 分析进行中拒绝重复触发，避免并发双跑（与状态守卫的幂等语义配合）
+        if (AsyncTaskStatus.PROCESSING.name().equals(resume.getAnalyzeStatus())) {
+            throw new BusinessException("ANALYSIS_IN_PROGRESS", "简历正在分析中，请稍后重试");
         }
         // 消费端状态守卫仅放行 PENDING/PROCESSING，
         // 已完成/失败的简历必须先重置回 PENDING 才能被重新领取
