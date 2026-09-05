@@ -85,7 +85,15 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
                 existing.setAnalyzeStatus(AsyncTaskStatus.PENDING.name());
                 existing.setAnalyzeError(null);
                 resumesMapper.updateById(existing);
-                streamProducer.send(existing.getId());
+                // 必须事务提交后再入队：XADD 立即可见，若在提交前投递，消费者会读到
+                // 未提交前的旧 COMPLETED 状态而 shouldSkip 跳过并 ACK，任务永久丢失
+                final Long existingId = existing.getId();
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        streamProducer.send(existingId);
+                    }
+                });
                 return existing;
             }
 

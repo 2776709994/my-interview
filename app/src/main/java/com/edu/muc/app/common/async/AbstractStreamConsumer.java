@@ -197,9 +197,7 @@ public abstract class AbstractStreamConsumer<T> {
                 return;
             }
             if (!tryMarkProcessing(payload)) {
-                ack(messageId);
-                log.info("{} task not claimed（状态守卫不通过，可能已被处理）: messageId={}",
-                        taskDisplayName(), messageId);
+                handleNotClaimed(messageId, payload, retryCount);
                 return;
             }
             processBusiness(payload);
@@ -218,6 +216,35 @@ public abstract class AbstractStreamConsumer<T> {
             }
             ack(messageId);
         }
+    }
+
+    /**
+     * 未领取（状态守卫不通过）的处理：有界重新入队，失败则不 ACK 留给 PEL 恢复器。
+     * <p>
+     * 未领取通常是竞态窗口：生产者事务尚未提交（消费者读到旧的 FAILED/COMPLETED
+     * 等状态），或状态恰好在 shouldSkip 与领取之间流转。重新入队由下一次投递时的
+     * 最新状态决定，避免任务因瞬时旧状态被静默丢弃；超过重试次数则放弃并告警。
+     * 注意：未领取意味着任务不属于本次投递，<b>绝不调用 markFailed</b>，
+     * 防止覆盖其他投递正在推进的真实状态。
+     * </p>
+     */
+    private void handleNotClaimed(RecordId messageId, T payload, int retryCount) {
+        if (retryCount < AsyncTaskStreamConstants.MAX_RETRY_COUNT) {
+            try {
+                log.info("{} task not claimed（状态守卫不通过）, re-enqueue: messageId={}, retryCount={}",
+                        taskDisplayName(), messageId, retryCount);
+                retryMessage(payload, retryCount + 1);
+            } catch (Exception e) {
+                // 重新入队失败：不 ACK，消息留在 PEL 由恢复器兜底重投
+                log.warn("{} task 重新入队失败，消息留在 PEL: messageId={}, error={}",
+                        taskDisplayName(), messageId, e.getMessage());
+                return;
+            }
+        } else {
+            log.warn("{} task not claimed after {} retries, dropping: payload={}",
+                    taskDisplayName(), retryCount, payloadIdentifier(payload));
+        }
+        ack(messageId);
     }
 
     /**
