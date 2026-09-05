@@ -195,16 +195,16 @@ public class PdfExportService {
                     .setBold()
                     .setFontColor(getScoreColor(overall)));
 
-            // 五维评分
+            // 五维评分（满分与评分提示词保持一致：40/20/15/15/10）
             document.add(new Paragraph("\n"));
             document.add(createSectionTitle("五维评分"));
             Table scoreTable = new Table(UnitValue.createPercentArray(new float[]{2, 1}))
                     .useAllAvailableWidth();
-            addScoreRow(scoreTable, "技能匹配度", analysis.getSkillMatchScore(), 25);
-            addScoreRow(scoreTable, "内容完整性", analysis.getContentScore(), 25);
-            addScoreRow(scoreTable, "结构清晰度", analysis.getStructureScore(), 20);
-            addScoreRow(scoreTable, "表达专业性", analysis.getExpressionScore(), 15);
-            addScoreRow(scoreTable, "项目经验", analysis.getProjectScore(), 15);
+            addScoreRow(scoreTable, "项目经验", analysis.getProjectScore(), 40);
+            addScoreRow(scoreTable, "技能匹配度", analysis.getSkillMatchScore(), 20);
+            addScoreRow(scoreTable, "内容完整性", analysis.getContentScore(), 15);
+            addScoreRow(scoreTable, "结构清晰度", analysis.getStructureScore(), 15);
+            addScoreRow(scoreTable, "表达专业性", analysis.getExpressionScore(), 10);
             document.add(scoreTable);
 
             // 简历摘要
