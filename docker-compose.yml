@@ -24,7 +24,7 @@ services:
       # 初始化脚本：容器首次启动时会自动执行 /docker-entrypoint-initdb.d/ 下的 .sql 文件
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     # 健康检查：
     # 后端服务(app)需要等待数据库完全启动并准备好连接后才能启动。
     # 这里通过 pg_isready 命令检测数据库状态。
@@ -48,7 +48,7 @@ services:
     image: redis:7
     container_name: interview-redis2
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -78,8 +78,8 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "9002:9000"
-      - "9003:9001"
+      - "127.0.0.1:9002:9000"
+      - "127.0.0.1:9003:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -104,16 +104,13 @@ services:
     depends_on:
       minio:
         condition: service_healthy # 必须等待 MinIO 服务健康（不仅仅是启动）
-    entrypoint: >
-      /bin/sh -c "
-      # 1. 配置 MinIO 客户端别名 (myminio) 连接到 minio 服务
-      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      # 2. 创建名为 my-interview 的存储桶
-      /usr/bin/mc mb myminio/my-interview;
-      # 3. 设置该存储桶为公共读权限（方便前端直接访问图片等资源）
-      /usr/bin/mc anonymous set public myminio/my-interview;
-      exit 0;
-      "
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin
+        /usr/bin/mc mb --ignore-existing myminio/my-interview
+        /usr/bin/mc anonymous set none myminio/my-interview
 
   # =========================================
   # 5. 后端应用服务 (Spring Boot)
@@ -138,6 +135,7 @@ services:
       createbuckets:
         condition: service_completed_successfully # 等待初始化任务完成
     environment:
+      SERVER_ADDRESS: 0.0.0.0
       # === 数据库连接（与 application.yml 占位符对齐） ===
       # 使用服务名 'postgres' 作为主机名，Docker 内部 DNS 会自动解析
       POSTGRES_HOST: postgres
@@ -168,7 +166,7 @@ services:
       APP_INTERVIEW_FOLLOW_UP_COUNT: ${APP_INTERVIEW_FOLLOW_UP_COUNT:-2}
       APP_INTERVIEW_EVALUATION_BATCH_SIZE: ${APP_INTERVIEW_EVALUATION_BATCH_SIZE:-8}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
   # =========================================
   # 6. 前端应用服务 (React + Nginx)
@@ -181,11 +179,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NPM_REGISTRY: ${FRONTEND_NPM_REGISTRY:-https://registry.npmjs.org}
     container_name: interview-frontend
     depends_on:
       - app
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      - "127.0.0.1:${FRONTEND_PORT:-80}:80"
 
 # =========================================
 # 定义 Docker 卷 (Volumes)

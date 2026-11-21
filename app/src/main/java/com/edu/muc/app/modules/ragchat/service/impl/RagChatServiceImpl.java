@@ -3,6 +3,7 @@ package com.edu.muc.app.modules.ragchat.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.edu.muc.app.common.JsonUtils;
+import com.edu.muc.app.common.ai.SseTextStream;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.modules.knowledgebase.domain.KnowledgeDocument;
 import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
@@ -18,13 +19,16 @@ import com.edu.muc.app.modules.ragchat.service.RagChatService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -32,9 +36,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -51,6 +53,7 @@ public class RagChatServiceImpl implements RagChatService {
     private final SmartRetrievalService smartRetrievalService;
     private final EmbeddingCacheService embeddingCacheService;
     private final ExecutorService ragQueryExecutor;
+    private final TransactionTemplate transactionTemplate;
 
     public RagChatServiceImpl(ChatSessionMapper sessionMapper,
                               ChatMessageMapper messageMapper,
@@ -61,7 +64,8 @@ public class RagChatServiceImpl implements RagChatService {
                               SmartRetrievalService smartRetrievalService,
                               EmbeddingCacheService embeddingCacheService,
                               @org.springframework.beans.factory.annotation.Qualifier("ragQueryExecutor") 
-                              ExecutorService ragQueryExecutor) {
+                              ExecutorService ragQueryExecutor,
+                              TransactionTemplate transactionTemplate) {
         this.sessionMapper = sessionMapper;
         this.messageMapper = messageMapper;
         this.documentMapper = documentMapper;
@@ -71,6 +75,7 @@ public class RagChatServiceImpl implements RagChatService {
         this.smartRetrievalService = smartRetrievalService;
         this.embeddingCacheService = embeddingCacheService;
         this.ragQueryExecutor = ragQueryExecutor;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Override
@@ -273,7 +278,12 @@ public class RagChatServiceImpl implements RagChatService {
 
     @Override
     public SseEmitter sendMessageStream(Long sessionId, String question) {
-        SseEmitter emitter = new SseEmitter(180000L); // 3分钟超时
+        ChatSession session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
+        }
+        List<Long> knowledgeBaseIds = deserializeKnowledgeBaseIds(session);
+        SseTextStream stream = new SseTextStream();
         
         // 保存用户消息
         ChatMessage userMessage = new ChatMessage();
@@ -283,108 +293,102 @@ public class RagChatServiceImpl implements RagChatService {
         userMessage.setCreatedAt(LocalDateTime.now());
         messageMapper.insert(userMessage);
 
-        // 异步处理 AI 回答
-        CompletableFuture.runAsync(() -> {
-            try {
-                ChatSession session = sessionMapper.selectById(sessionId);
-                if (session == null) {
-                    emitter.completeWithError(new RuntimeException("会话不存在"));
-                    return;
-                }
+        return stream.start(ragQueryExecutor, () -> {
+            List<Message> history = loadRecentMessages(sessionId, userMessage.getId());
+            // 1. 将问题向量化（高频问题走 Redis 缓存，命中跳过 embedding 调用）
+            float[] qEmbedding = embeddingCacheService.embedCached(embeddingModel, question);
+            String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
 
-                // 解析知识库ID
-                List<Long> knowledgeBaseIds = objectMapper.readValue(
-                        session.getKnowledgeBaseIds(), 
-                        new TypeReference<List<Long>>() {}
-                );
+            // 2. 智能检索相关文档片段（双路检索：向量 + 关键词 + Rerank，按会话关联的知识库 ID 过滤）
+            List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(question, qJson, knowledgeBaseIds);
 
-                // 1. 将问题向量化（高频问题走 Redis 缓存，命中跳过 embedding 调用）
-                float[] qEmbedding = embeddingCacheService.embedCached(embeddingModel, question);
-                String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
-                
-                // 2. 智能检索相关文档片段（双路检索：向量 + 关键词 + Rerank，按会话关联的知识库 ID 过滤）
-                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(question, qJson, knowledgeBaseIds);
-                
-                // 3. 构建上下文（使用 chunk 的内容，并标注来源）
-                String context = docs.stream()
-                        .map(doc -> {
-                            String source = doc.getName();
-                            return String.format("【%s】\n%s", source, doc.getContent());
-                        })
-                        .collect(Collectors.joining("\n\n"));
-                
-                log.info("🔍 RAG 检索到 {} 个相关文档片段", docs.size());
-                
-                // 4. 使用模板构建 Prompt
-                String userPrompt = USER_PROMPT_TEMPLATE.replace("{context}", context)
-                        .replace("{question}", question);
+            // 3. 构建上下文（使用 chunk 的内容，并标注来源）
+            String context = docs.stream()
+                    .map(doc -> {
+                        String source = doc.getName();
+                        return String.format("【%s】\n%s", source, doc.getContent());
+                    })
+                    .collect(Collectors.joining("\n\n"));
 
-                // 5. 流式调用 AI
-                StringBuilder fullAnswer = new StringBuilder();
-                final AtomicReference<org.reactivestreams.Subscription> subRef = new AtomicReference<>();
-                chatClient.prompt()
-                        .system(SYSTEM_PROMPT_TEMPLATE)
-                        .user(userPrompt)
-                        .stream()
-                        .content()
-                        .doOnNext(chunk -> {
-                            try {
-                                fullAnswer.append(chunk);
-                                emitter.send(chunk);
-                            } catch (IOException e) {
-                                log.error("❌ SSE 发送失败，关闭连接", e);
-                                emitter.completeWithError(e);
-                                org.reactivestreams.Subscription sub = subRef.get();
-                                if (sub != null) sub.cancel();
-                                throw new RuntimeException(e);
+            log.info("🔍 RAG 检索到 {} 个相关文档片段", docs.size());
+
+            // 4. 使用模板构建 Prompt
+            String userPrompt = USER_PROMPT_TEMPLATE.replace("{context}", context)
+                    .replace("{question}", question);
+
+            // 5. 流式调用 AI
+            StringBuilder fullAnswer = new StringBuilder();
+            stream.send(chatClient.prompt()
+                    .system(SYSTEM_PROMPT_TEMPLATE)
+                    .messages(history)
+                    .user(userPrompt)
+                    .stream()
+                    .content()
+                    .doOnNext(fullAnswer::append), () -> transactionTemplate.executeWithoutResult(ignored -> {
+                        if (fullAnswer.toString().isBlank()) {
+                            throw new IllegalStateException("模型返回空回答");
+                        }
+                        // 保存 AI 回答
+                        ChatMessage assistantMessage = new ChatMessage();
+                        assistantMessage.setSessionId(sessionId);
+                        assistantMessage.setType("assistant");
+                        assistantMessage.setContent(fullAnswer.toString());
+                        assistantMessage.setCreatedAt(LocalDateTime.now());
+                        messageMapper.insert(assistantMessage);
+
+                        // 更新父文档的提问次数和访问次数
+                        if (!knowledgeBaseIds.isEmpty()) {
+                            // 通过子文档的 parentId 找到父文档并更新统计
+                            List<Long> parentIds = docs.stream()
+                                    .map(KnowledgeDocument::getParentId)
+                                    .filter(id -> id != null)
+                                    .distinct()
+                                    .toList();
+
+                            if (!parentIds.isEmpty()) {
+                                documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                                        .setSql("question_count = question_count + 1")
+                                        .in(KnowledgeDocument::getId, parentIds));
+                                documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                                        .setSql("access_count = access_count + 1")
+                                        .in(KnowledgeDocument::getId, parentIds));
                             }
-                        })
-                        .doOnComplete(() -> {
-                            // 保存 AI 回答
-                            ChatMessage assistantMessage = new ChatMessage();
-                            assistantMessage.setSessionId(sessionId);
-                            assistantMessage.setType("assistant");
-                            assistantMessage.setContent(fullAnswer.toString());
-                            assistantMessage.setCreatedAt(LocalDateTime.now());
-                            messageMapper.insert(assistantMessage);
+                        }
 
-                            // 更新父文档的提问次数和访问次数
-                            if (!knowledgeBaseIds.isEmpty()) {
-                                // 通过子文档的 parentId 找到父文档并更新统计
-                                List<Long> parentIds = docs.stream()
-                                        .map(KnowledgeDocument::getParentId)
-                                        .filter(id -> id != null)
-                                        .distinct()
-                                        .toList();
+                        sessionMapper.update(null, new LambdaUpdateWrapper<ChatSession>()
+                                .eq(ChatSession::getId, sessionId)
+                                .set(ChatSession::getUpdatedAt, LocalDateTime.now()));
+                    }));
+        });
+    }
 
-                                if (!parentIds.isEmpty()) {
-                                    documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
-                                            .setSql("question_count = question_count + 1")
-                                            .in(KnowledgeDocument::getId, parentIds));
-                                    documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
-                                            .setSql("access_count = access_count + 1")
-                                            .in(KnowledgeDocument::getId, parentIds));
-                                }
-                            }
-
-                            // 更新会话时间
-                            session.setUpdatedAt(LocalDateTime.now());
-                            sessionMapper.updateById(session);
-
-                            emitter.complete();
-                        })
-                        .doOnError(err -> {
-                            log.error("❌ SSE 查询失败", err);
-                            emitter.completeWithError(err);
-                        })
-                        .subscribe();
-                        
-            } catch (Exception e) {
-                log.error("❌ SSE 查询异常", e);
-                emitter.completeWithError(e);
+    private List<Message> loadRecentMessages(Long sessionId, Long beforeId) {
+        List<ChatMessage> recent = messageMapper.selectList(new LambdaQueryWrapper<ChatMessage>()
+                .eq(ChatMessage::getSessionId, sessionId)
+                .lt(ChatMessage::getId, beforeId)
+                .orderByDesc(ChatMessage::getId)
+                .last("LIMIT 10"));
+        List<Message> history = new ArrayList<>(recent.size());
+        for (ChatMessage entry : recent.reversed()) {
+            if (entry.getContent() == null || entry.getContent().isBlank()) {
+                continue;
             }
-        }, ragQueryExecutor);  // ✅ 使用配置的线程池
-        
-        return emitter;
+            String content = entry.getContent().substring(0, Math.min(1500, entry.getContent().length()));
+            history.add("assistant".equals(entry.getType()) ? new AssistantMessage(content) : new UserMessage(content));
+        }
+        return history;
+    }
+
+    private List<Long> deserializeKnowledgeBaseIds(ChatSession session) {
+        try {
+            String value = session.getKnowledgeBaseIds();
+            if (value == null || value.isBlank()) {
+                return List.of();
+            }
+            List<Long> ids = objectMapper.readValue(value, new TypeReference<List<Long>>() {});
+            return ids == null ? List.of() : ids;
+        } catch (JsonProcessingException error) {
+            throw new IllegalStateException("无法读取会话关联的知识库", error);
+        }
     }
 }

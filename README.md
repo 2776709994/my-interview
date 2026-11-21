@@ -24,7 +24,7 @@ TalentPilot 是一个面向求职者的全栈 AI 应用，集成 **AI 简历分�
 4. 🔗 **RAG 与面试打通**：出题时向量检索所选知识库内容作为参考，让面试题贴合你的知识库资料
 5. 📚 **知识库 RAG 问答**：上传技术文档构建个人知识库，基于 pgvector 向量检索 + 流式生成，实现"上传即问即答"
 6. 💬 **多轮对话**：支持会话管理、消息历史、知识库关联，SSE 流式输出体验丝滑
-7. 📅 **面试日程管理**：日历视图管理面试安排，支持状态自动流转（待面试 → 进行中 → 已完成）
+7. 📅 **面试日程管理**：在日历中管理面试安排、手动更新面试状态，过期的待面试日程会自动标记为已取消
 8. ⚙️ **LLM Provider 管理**：多模型服务配置、连通性测试、默认模型切换，支持动态切换 AI 提供商
 
 ### 与原项目的差异
@@ -134,8 +134,9 @@ API 请求  ──▶  RedisStreamProducer  ──▶  [Redis Stream]  ──▶
                                                           + ACK 确认消息
 ```
 
-**三条异步任务管道**：
+**四条异步任务管道**：
 - `resume:analysis` → 简历文本解析 + AI 多维度评分
+- `knowledgebase:vectorize` → 文档分块、Embedding 和向量入库
 - `interview:evaluation` → 文字面试答案 AI 评估 + 报告生成
 - `voice-interview:evaluation` → 语音面试记录 AI 评估 + 报告生成
 
@@ -245,6 +246,8 @@ docker-compose logs -f app
 - 后端 API：http://localhost:8080
 - MinIO 控制台：http://localhost:9003 （账号/密码：minioadmin/minioadmin）
 
+Compose 默认将服务端口绑定到本机，MinIO 存储桶使用私有访问。当前版本面向单用户本地部署，API 共用同一份数据和模型配置。前端镜像默认使用 npm 官方注册表，可以通过 `FRONTEND_NPM_REGISTRY` 切换到可访问的镜像。
+
 ### 4. 启动前端开发服务器
 
 ```bash
@@ -335,7 +338,7 @@ cd app
 
 ### 4. 面试日程模块（InterviewSchedule）
 
-**流程**：创建日程 → 日历展示 → 状态自动流转（PENDING → IN_PROGRESS → COMPLETED）
+**流程**：创建日程 → 日历展示 → 手动更新完成、取消或改期状态。定时任务会将过期的待面试日程标记为已取消。
 
 **特性**：日历视图、面试信息解析（公司/职位/时间/轮次）、状态定时更新。
 

@@ -5,8 +5,11 @@ WORKDIR /build
 # 先复制依赖清单，利用 Docker 层缓存加速（依赖不变时不会重复 install）
 COPY package.json pnpm-lock.yaml ./
 COPY .npmrc ./
+# Corepack 与 pnpm 使用同一个可配置的注册表。
+ARG NPM_REGISTRY=https://registry.npmjs.org
+ENV COREPACK_NPM_REGISTRY=${NPM_REGISTRY}
 RUN corepack enable \
-    && pnpm install --frozen-lockfile
+    && pnpm install --frozen-lockfile --registry "${NPM_REGISTRY}"
 
 # 复制源码并构建（tsc 类型检查 + vite build）
 COPY . .

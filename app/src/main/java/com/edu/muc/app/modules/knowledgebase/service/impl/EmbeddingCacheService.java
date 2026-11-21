@@ -5,6 +5,7 @@ import com.edu.muc.app.modules.knowledgebase.config.RagRetrievalConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -36,10 +37,13 @@ public class EmbeddingCacheService {
     private final RagRetrievalConfig retrievalConfig;
     private final ObjectMapper objectMapper;
 
+    @Value("${spring.ai.openai.embedding.options.model}")
+    private String modelName;
+
     /**
      * 优先取缓存，未命中则调用模型并回填缓存。
      *
-     * @param model embedding 模型（由调用方传入，兼容 LlmProviderRegistry 动态取模型）
+     * @param model 知识库索引与查询共用的 embedding 模型
      * @param text  问题原文
      * @return 向量数组
      */
@@ -48,7 +52,7 @@ public class EmbeddingCacheService {
                 || text == null || text.isBlank()) {
             return model.embed(text);
         }
-        String key = KEY_PREFIX + md5(text);
+        String key = KEY_PREFIX + modelName + ":" + md5(text);
         try {
             String cached = redisTemplate.opsForValue().get(key);
             if (cached != null) {

@@ -1,6 +1,7 @@
 package com.edu.muc.app.modules.interview.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.edu.muc.app.common.JsonUtils;
 import com.edu.muc.app.common.ai.LlmProviderRegistry;
 import com.edu.muc.app.common.exception.BusinessException;
@@ -31,6 +32,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -59,11 +64,16 @@ public class InterviewServiceImpl implements InterviewService {
     private final LlmProviderRegistry llmProviderRegistry;
     private final SmartRetrievalService smartRetrievalService;
     private final EmbeddingCacheService embeddingCacheService;
+    private final EmbeddingModel embeddingModel;
+    private final TransactionTemplate transactionTemplate;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
     @Transactional
     public InterviewSessionDTO createSession(CreateInterviewRequest request) {
+        if (request.getQuestionCount() < 1 || request.getQuestionCount() > 30) {
+            throw new BusinessException("INVALID_QUESTION_COUNT", "题目数须在 1 至 30 之间");
+        }
         log.info("🎯 创建面试会话: skillId={}, difficulty={}, questionCount={}",
                 request.getSkillId(), request.getDifficulty(), request.getQuestionCount());
 
@@ -108,7 +118,6 @@ public class InterviewServiceImpl implements InterviewService {
         session.setTotalQuestions(questions.size());
         session.setCurrentQuestionIndex(0);
         session.setStatus(SessionStatus.IN_PROGRESS.getCode());
-        session.setEvaluateStatus(EvaluateStatus.PENDING.getCode());
         session.setCreatedAt(LocalDateTime.now());
         
         sessionMapper.insert(session);
@@ -268,7 +277,8 @@ public class InterviewServiceImpl implements InterviewService {
             log.info("✅ 找到 {} 个问题数据", questionsData.size());
             
             List<InterviewQuestionDTO> questions = new ArrayList<>();
-            for (int i = 0; i < Math.min(expectedCount, questionsData.size()); i++) {
+            Set<String> seenQuestions = new HashSet<>();
+            for (int i = 0; i < questionsData.size() && questions.size() < expectedCount; i++) {
                 Map<String, Object> qData = questionsData.get(i);
                 
                 if (qData == null) {
@@ -277,21 +287,25 @@ public class InterviewServiceImpl implements InterviewService {
                 }
                 
                 InterviewQuestionDTO question = new InterviewQuestionDTO();
-                question.setQuestionIndex(i);
-                question.setQuestion((String) qData.get("question"));
-                question.setType((String) qData.getOrDefault("type", "technical"));
-                question.setCategory((String) qData.getOrDefault("category", "general"));
+                if (!(qData.get("question") instanceof String text) || text.isBlank()
+                        || !seenQuestions.add(text.strip())) {
+                    continue;
+                }
+                question.setQuestionIndex(questions.size());
+                question.setQuestion(text.strip());
+                question.setType(qData.get("type") instanceof String type && !type.isBlank()
+                        ? type.substring(0, Math.min(type.length(), 50)) : "technical");
+                question.setCategory(qData.get("category") instanceof String category && !category.isBlank()
+                        ? category.substring(0, Math.min(category.length(), 100)) : "general");
                 // topicSummary：知识点摘要，用于历史去重（AI 未返回时置空，不影响出题）
                 Object topicSummary = qData.get("topicSummary");
-                question.setTopicSummary(topicSummary != null ? topicSummary.toString().trim() : null);
+                if (topicSummary != null) {
+                    String topic = topicSummary.toString().strip();
+                    question.setTopicSummary(topic.substring(0, Math.min(topic.length(), 255)));
+                }
                 question.setUserAnswer(null);
                 question.setScore(null);
                 question.setFeedback(null);
-                
-                if (question.getQuestion() == null || question.getQuestion().isEmpty()) {
-                    log.warn("⚠️ 问题 {} 的内容为空，跳过", i);
-                    continue;
-                }
                 
                 questions.add(question);
             }
@@ -305,7 +319,6 @@ public class InterviewServiceImpl implements InterviewService {
             return questions;
         } catch (Exception e) {
             log.error("❌ 解析 AI 响应失败", e);
-            log.error("❌ AI 原始响应: {}", aiResponse);
             throw new RuntimeException("解析问题失败: " + e.getMessage(), e);
         }
     }
@@ -353,7 +366,6 @@ public class InterviewServiceImpl implements InterviewService {
             if (queryText.isBlank()) {
                 return "无";
             }
-            EmbeddingModel embeddingModel = llmProviderRegistry.getDefaultEmbeddingModel();
             float[] queryEmbedding = embeddingCacheService.embedCached(embeddingModel, queryText);
             String queryVector = JsonUtils.convertEmbeddingToJson(queryEmbedding);
 
@@ -487,23 +499,10 @@ public class InterviewServiceImpl implements InterviewService {
     @Override
     @Transactional
     public SubmitAnswerResponse submitAnswer(SubmitAnswerRequest request) {
-        InterviewSession session = sessionMapper.selectById(request.getSessionId());
-        if (session == null) {
-            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
-        }
-
-        // 校验会话状态：仅进行中/已创建的会话可提交答案
-        String status = session.getStatus();
-        if (!SessionStatus.IN_PROGRESS.getCode().equals(status)
-                && !SessionStatus.CREATED.getCode().equals(status)) {
-            throw new BusinessException("INTERVIEW_ALREADY_COMPLETED", "面试已结束，无法提交答案");
-        }
-
-        // 校验题目索引范围，防止乱序/越界提交破坏进度
+        InterviewSession session = requireCurrentQuestion(request);
         int questionIndex = request.getQuestionIndex();
-        if (questionIndex < 0 || questionIndex >= session.getTotalQuestions()) {
-            throw new BusinessException("INTERVIEW_QUESTION_NOT_FOUND",
-                    "题目索引非法: " + questionIndex);
+        if (request.getAnswer() == null || request.getAnswer().isBlank()) {
+            throw new BusinessException("INVALID_ANSWER", "答案不能为空");
         }
 
         // 保存答案到数据库
@@ -521,6 +520,9 @@ public class InterviewServiceImpl implements InterviewService {
         }
         
         sessionMapper.updateById(session);
+        if (!hasNext) {
+            scheduleEvaluation(session.getSessionId());
+        }
 
         SubmitAnswerResponse response = new SubmitAnswerResponse();
         response.setHasNextQuestion(hasNext);
@@ -539,7 +541,10 @@ public class InterviewServiceImpl implements InterviewService {
     @Override
     @Transactional
     public void saveAnswer(SubmitAnswerRequest request) {
-        // 保存答案但不推进索引
+        requireCurrentQuestion(request);
+        if (request.getAnswer() == null) {
+            throw new BusinessException("INVALID_ANSWER", "请提供答案内容");
+        }
         saveAnswerToDatabase(request.getSessionId(), request.getQuestionIndex(), request.getAnswer());
         log.info("💾 暂存答案: sessionId={}, questionIndex={}", 
                 request.getSessionId(), request.getQuestionIndex());
@@ -552,37 +557,32 @@ public class InterviewServiceImpl implements InterviewService {
             throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
 
-        // 如果还未评估或评估失败，触发生成
-        String evaluateStatus = session.getEvaluateStatus();
-
-        // 先检查是否正在处理中（防止重复触发）
-        if (EvaluateStatus.PROCESSING.getCode().equals(evaluateStatus)) {
-            log.info("⏳ 评估正在处理中，请稍后刷新: {}", sessionId);
-            throw new BusinessException("EVALUATION_IN_PROGRESS", "评估正在处理中，请稍后刷新");
+        if (isAnswerable(session)) {
+            throw new BusinessException("INTERVIEW_NOT_COMPLETED", "请先交卷再查看评估报告");
         }
-
-        if (evaluateStatus == null ||
-            EvaluateStatus.PENDING.getCode().equals(evaluateStatus) ||
-            EvaluateStatus.FAILED.getCode().equals(evaluateStatus)) {
-            
-            // 异步触发评估
-            if (!streamProducer.send(sessionId)) {
-                throw new BusinessException("EVALUATION_TRIGGER_FAILED", "评估任务入队失败，请稍后重试");
-            }
-            log.info("📤 已发送评估任务到 Redis Stream: {}", sessionId);
-            session.setEvaluateStatus(EvaluateStatus.PENDING.getCode());
-            sessionMapper.updateById(session);
-            
-            // 重新加载
+        if (!EvaluateStatus.COMPLETED.getCode().equals(session.getEvaluateStatus())) {
+            transactionTemplate.executeWithoutResult(ignored -> {
+                InterviewSession current = lockSession(sessionId);
+                String status = current.getEvaluateStatus();
+                // 兼容升级前交卷后仍未入队的 PENDING 记录。
+                boolean stalePending = EvaluateStatus.PENDING.getCode().equals(status)
+                        && (current.getCompletedAt() == null
+                        || current.getCompletedAt().isBefore(LocalDateTime.now().minusMinutes(5)));
+                if (SessionStatus.COMPLETED.getCode().equals(current.getStatus())
+                        && (status == null || EvaluateStatus.FAILED.getCode().equals(status) || stalePending)) {
+                    scheduleEvaluation(sessionId);
+                }
+            });
             session = sessionMapper.selectById(sessionId);
-            
-            // 如果还是 PENDING，说明消费者还没开始处理
-            if (EvaluateStatus.PENDING.getCode().equals(session.getEvaluateStatus())) {
-                throw new BusinessException("EVALUATION_PENDING", "评估任务已提交，请稍后刷新查看结果");
+            if (session == null) {
+                throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
             }
-            // 若消费者已开始处理，同样告知用户稍后刷新，避免读到空报告
-            if (EvaluateStatus.PROCESSING.getCode().equals(session.getEvaluateStatus())) {
-                throw new BusinessException("EVALUATION_IN_PROGRESS", "评估正在处理中，请稍后刷新");
+            String evaluateStatus = session.getEvaluateStatus();
+            if (EvaluateStatus.FAILED.getCode().equals(evaluateStatus)) {
+                throw new BusinessException("EVALUATION_TRIGGER_FAILED", "评估任务提交失败，请稍后重试");
+            }
+            if (!EvaluateStatus.COMPLETED.getCode().equals(evaluateStatus)) {
+                throw new BusinessException("EVALUATION_PENDING", "评估处理中，请稍后查看结果");
             }
         }
 
@@ -629,7 +629,8 @@ public class InterviewServiceImpl implements InterviewService {
         // 构建问题评估列表
         List<InterviewReportDTO.QuestionEvaluationDTO> questionDetails = new ArrayList<>();
         Map<Integer, InterviewAnswer> answerMap = answers.stream()
-                .collect(Collectors.toMap(InterviewAnswer::getQuestionIndex, a -> a));
+                .collect(Collectors.toMap(InterviewAnswer::getQuestionIndex, a -> a,
+                        (left, right) -> left.getId() > right.getId() ? left : right));
         
         for (InterviewQuestion q : questions) {
             InterviewAnswer a = answerMap.get(q.getQuestionIndex());
@@ -723,9 +724,9 @@ public class InterviewServiceImpl implements InterviewService {
     @Override
     @Transactional
     public void completeInterview(String sessionId) {
-        InterviewSession session = sessionMapper.selectById(sessionId);
-        if (session == null) {
-            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
+        InterviewSession session = lockSession(sessionId);
+        if (!isAnswerable(session)) {
+            return;
         }
         
         session.setStatus(SessionStatus.COMPLETED.getCode());
@@ -734,13 +735,58 @@ public class InterviewServiceImpl implements InterviewService {
         
         log.info("✅ 面试提前交卷: {}", sessionId);
         
-        // 异步触发评估（通过 Redis Stream）
-        if (!streamProducer.send(sessionId)) {
-            log.error("❌ 发送评估任务失败: {}", sessionId);
-            // 即使发送失败，也不影响交卷操作
-        } else {
-            log.info("📤 已发送评估任务到 Redis Stream: {}", sessionId);
+        scheduleEvaluation(sessionId);
+    }
+
+    private InterviewSession lockSession(String sessionId) {
+        InterviewSession session = sessionMapper.selectOne(new LambdaQueryWrapper<InterviewSession>()
+                .eq(InterviewSession::getSessionId, sessionId)
+                .last("FOR UPDATE"));
+        if (session == null) {
+            throw new BusinessException("SESSION_NOT_FOUND", "会话不存在");
         }
+        return session;
+    }
+
+    private boolean isAnswerable(InterviewSession session) {
+        return SessionStatus.IN_PROGRESS.getCode().equals(session.getStatus())
+                || SessionStatus.CREATED.getCode().equals(session.getStatus());
+    }
+
+    private InterviewSession requireCurrentQuestion(SubmitAnswerRequest request) {
+        InterviewSession session = lockSession(request.getSessionId());
+        if (!isAnswerable(session)) {
+            throw new BusinessException("INTERVIEW_ALREADY_COMPLETED", "面试已结束，无法提交答案");
+        }
+        Integer index = request.getQuestionIndex();
+        if (index == null || index < 0 || index >= session.getTotalQuestions()
+                || !index.equals(session.getCurrentQuestionIndex())) {
+            throw new BusinessException("INTERVIEW_QUESTION_NOT_FOUND", "只能提交或暂存当前问题的答案");
+        }
+        return session;
+    }
+
+    private void scheduleEvaluation(String sessionId) {
+        sessionMapper.update(null, new LambdaUpdateWrapper<InterviewSession>()
+                .eq(InterviewSession::getSessionId, sessionId)
+                .set(InterviewSession::getEvaluateStatus, EvaluateStatus.PENDING.getCode())
+                .set(InterviewSession::getEvaluateError, null));
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                if (!streamProducer.send(sessionId)) {
+                    TransactionTemplate failureTransaction =
+                            new TransactionTemplate(transactionTemplate.getTransactionManager());
+                    failureTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                    failureTransaction.executeWithoutResult(ignored -> sessionMapper.update(null,
+                            new LambdaUpdateWrapper<InterviewSession>()
+                                    .eq(InterviewSession::getSessionId, sessionId)
+                                    .eq(InterviewSession::getEvaluateStatus, EvaluateStatus.PENDING.getCode())
+                                    .set(InterviewSession::getEvaluateStatus, EvaluateStatus.FAILED.getCode())
+                                    .set(InterviewSession::getEvaluateError, "评估任务入队失败，请重试")));
+                }
+            }
+        });
     }
 
     // ========== 辅助方法 ==========
@@ -924,7 +970,9 @@ public class InterviewServiceImpl implements InterviewService {
         
         try {
             // 1. 检查会话是否存在
-            InterviewSession session = sessionMapper.selectById(sessionId);
+            InterviewSession session = sessionMapper.selectOne(new LambdaQueryWrapper<InterviewSession>()
+                    .eq(InterviewSession::getSessionId, sessionId)
+                    .last("FOR UPDATE"));
             if (session == null) {
                 log.warn("⚠️ 会话不存在: {}", sessionId);
                 return false;

@@ -152,15 +152,15 @@ export default function Interview({
   };
 
   const handleSubmitAnswer = async () => {
-    if (!answer.trim() || !session || !currentQuestion) return;
+    if (isSubmitting || !answer.trim() || !session || !currentQuestion) return;
 
     setIsSubmitting(true);
+    setError('');
 
     const userMessage: Message = {
       type: 'user',
-      content: answer
+      content: answer.trim()
     };
-    setMessages(prev => [...prev, userMessage]);
 
     try {
       const response = await interviewApi.submitAnswer({
@@ -170,6 +170,7 @@ export default function Interview({
       });
 
       setAnswer('');
+      setMessages(prev => [...prev, userMessage]);
 
       if (response.hasNextQuestion && response.nextQuestion) {
         setCurrentQuestion(response.nextQuestion);
@@ -183,7 +184,7 @@ export default function Interview({
         onInterviewComplete();
       }
     } catch (err) {
-      setError('提交答案失败，请重试');
+      setError(err instanceof Error ? err.message : '提交答案失败，请重试');
       console.error(err);
     } finally {
       setIsSubmitting(false);
@@ -191,7 +192,7 @@ export default function Interview({
   };
 
   const handleCompleteEarly = async () => {
-    if (!session) return;
+    if (isSubmitting || !session) return;
 
     setIsSubmitting(true);
     try {

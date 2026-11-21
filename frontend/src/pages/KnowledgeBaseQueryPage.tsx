@@ -60,6 +60,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const rafRef = useRef<number>();
   const abortControllerRef = useRef<AbortController | null>(null);
+  const viewVersion = useRef(0);
 
   const [, startTransition] = useTransition();
 
@@ -67,7 +68,9 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     loadKnowledgeBases();
     loadSessions();
     return () => {
+      viewVersion.current++;
       abortControllerRef.current?.abort();
+      if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
     };
   }, []);
 
@@ -98,7 +101,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     setLoadingList(true);
     try {
       const list = await knowledgeBaseApi.search(searchKeyword.trim());
-      setKnowledgeBases(list);
+      setKnowledgeBases(list.filter(item => item.vectorStatus === 'COMPLETED'));
     } catch (err) {
       console.error('搜索知识库失败', err);
     } finally {
@@ -159,32 +162,41 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     }
   };
 
+  const cancelAnswer = () => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    if (rafRef.current !== undefined) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = undefined;
+    }
+    setLoading(false);
+  };
+
   const handleToggleKb = (kbId: number) => {
-    setSelectedKbIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(kbId)) {
-        newSet.delete(kbId);
-      } else {
-        newSet.add(kbId);
-      }
-      if (newSet.size !== prev.size && currentSessionId) {
-        setCurrentSessionId(null);
-        setCurrentSessionTitle('');
-        setMessages([]);
-      }
-      return newSet;
-    });
+    const next = new Set(selectedKbIds);
+    if (next.has(kbId)) {
+      next.delete(kbId);
+    } else {
+      next.add(kbId);
+    }
+    handleNewSession();
+    setSelectedKbIds(next);
   };
 
   const handleNewSession = () => {
+    viewVersion.current++;
+    cancelAnswer();
     setCurrentSessionId(null);
     setCurrentSessionTitle('');
     setMessages([]);
   };
 
   const handleLoadSession = async (sessionId: number) => {
+    const version = ++viewVersion.current;
+    cancelAnswer();
     try {
       const detail = await ragChatApi.getSessionDetail(sessionId);
+      if (version !== viewVersion.current) return;
       setCurrentSessionId(detail.id);
       setCurrentSessionTitle(detail.title);
       setSelectedKbIds(new Set(detail.knowledgeBases.map(kb => kb.id)));
@@ -243,24 +255,12 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     }
   };
 
-  const formatMarkdown = (text: string): string => {
-    if (!text) return '';
-    return text
-      // 处理转义换行符
-      .replace(/\\n/g, '\n')
-      // 确保标题 # 后有空格
-      .replace(/^(#{1,6})([^\s#\n])/gm, '$1 $2')
-      // 确保有序列表数字后有空格（如 1.xxx -> 1. xxx）
-      .replace(/^(\s*)(\d+)\.([^\s\n])/gm, '$1$2. $3')
-      // 确保无序列表 - 或 * 后有空格
-      .replace(/^(\s*[-*])([^\s\n-])/gm, '$1 $2')
-      // 压缩多余空行
-      .replace(/\n{3,}/g, '\n\n');
-  };
-
   const handleSubmitQuestion = async () => {
-    if (!question.trim() || selectedKbIds.size === 0 || loading) return;
+    if (!question.trim() || selectedKbIds.size === 0 || abortControllerRef.current) return;
 
+    const request = new AbortController();
+    abortControllerRef.current = request;
+    viewVersion.current++;
     const userQuestion = question.trim();
     setQuestion('');
     setLoading(true);
@@ -269,11 +269,15 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     if (!sessionId) {
       try {
         const session = await ragChatApi.createSession(Array.from(selectedKbIds));
+        if (request.signal.aborted) return;
         sessionId = session.id;
         setCurrentSessionId(sessionId);
         setCurrentSessionTitle(session.title);
       } catch (err) {
+        if (request.signal.aborted) return;
         console.error('创建会话失败', err);
+        setQuestion(userQuestion);
+        abortControllerRef.current = null;
         setLoading(false);
         return;
       }
@@ -296,6 +300,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     let fullContent = '';
     const updateAssistantMessage = (content: string) => {
       setMessages(prev => {
+        if (request.signal.aborted) return prev;
         const newMessages = [...prev];
         const lastIndex = newMessages.length - 1;
         if (lastIndex >= 0 && newMessages[lastIndex].type === 'assistant') {
@@ -309,11 +314,11 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
     };
 
     try {
-      abortControllerRef.current = new AbortController();
       await ragChatApi.sendMessageStream(
         sessionId,
         userQuestion,
         (chunk: string) => {
+          if (request.signal.aborted) return;
           fullContent += chunk;
           if (rafRef.current) {
             cancelAnimationFrame(rafRef.current);
@@ -325,24 +330,29 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
           });
         },
         () => {
-          setLoading(false);
+          if (request.signal.aborted) return;
+          if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
+          updateAssistantMessage(fullContent);
           loadSessions();
         },
         (error: Error) => {
+          if (request.signal.aborted) return;
+          if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
           console.error('流式查询失败:', error);
-          updateAssistantMessage(fullContent || error.message || '回答失败，请重试');
-          setLoading(false);
+          updateAssistantMessage([fullContent, error.message].filter(Boolean).join('\n\n'));
         },
-        abortControllerRef.current
+        request
       );
     } catch (err) {
       if ((err as Error).name !== 'AbortError') {
         console.error('发起流式查询失败:', err);
         updateAssistantMessage(err instanceof Error ? err.message : '回答失败，请重试');
       }
-      setLoading(false);
     } finally {
-      abortControllerRef.current = null;
+      if (abortControllerRef.current === request) {
+        abortControllerRef.current = null;
+        setLoading(false);
+      }
     }
   };
 
@@ -600,7 +610,7 @@ export default function KnowledgeBaseQueryPage({ onBack, onUpload }: KnowledgeBa
                                       pre: ({ children }) => <>{children}</>,
                                     }}
                                   >
-                                    {formatMarkdown(msg.content)}
+                                    {msg.content}
                                   </ReactMarkdown>
                                   {loading && index === messages.length - 1 && (
                                     <span className="inline-block w-0.5 h-5 bg-primary-500 ml-1 animate-pulse" />

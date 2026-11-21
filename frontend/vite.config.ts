@@ -22,18 +22,16 @@ export default defineConfig({
     },
   },
   server: {
-      host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
-        changeOrigin: true,
+        target: 'http://127.0.0.1:8080',
       },
       // 语音面试 WebSocket（后端返回的 webSocketUrl 基于当前请求 host，dev 下是 5173）
       '/ws': {
-        target: 'ws://localhost:8080',
+        target: 'ws://127.0.0.1:8080',
         ws: true,
-        changeOrigin: true,
       },
     },
     // 忽略 @ricky0123/vad-web 的 sourcemap 警告

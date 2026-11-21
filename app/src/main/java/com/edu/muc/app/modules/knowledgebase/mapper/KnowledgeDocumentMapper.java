@@ -14,6 +14,8 @@ import java.util.Map;
  */
 @Mapper
 public interface KnowledgeDocumentMapper extends BaseMapper<KnowledgeDocument> {
+    @Select("SELECT true FROM pg_advisory_xact_lock(hashtextextended('knowledge:' || #{hash}, 0))")
+    boolean lockFileHash(@Param("hash") String hash);
 
     /**
      * 向量相似度检索（旧方法，保留兼容）

@@ -5,6 +5,7 @@ import com.edu.muc.app.common.constant.AsyncTaskStreamConstants;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
 import com.edu.muc.app.infrastructure.redis.StreamPendingRecoverer;
 import com.edu.muc.app.modules.voiceinterview.model.VoiceInterviewSessionEntity;
+import com.edu.muc.app.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import com.edu.muc.app.modules.voiceinterview.service.VoiceInterviewEvaluationService;
 import com.edu.muc.app.modules.voiceinterview.service.VoiceInterviewService;
 import lombok.extern.slf4j.Slf4j;
@@ -92,13 +93,14 @@ public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<Long> {
     protected boolean shouldSkip(Long sessionId) {
         // 已完成评估的会话跳过（幂等：重复投递不重复评估）
         VoiceInterviewSessionEntity session = voiceInterviewService.getSession(sessionId);
-        return session != null && AsyncTaskStatus.COMPLETED.name().equals(session.getEvaluateStatus());
+        return session == null || session.getStatus() != VoiceInterviewSessionStatus.COMPLETED
+                || AsyncTaskStatus.COMPLETED.name().equals(session.getEvaluateStatus());
     }
 
     @Override
     protected boolean tryMarkProcessing(Long sessionId) {
-        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.PROCESSING, null);
-        return true;
+        return voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.PROCESSING, null,
+                AsyncTaskStatus.PENDING.name(), AsyncTaskStatus.PROCESSING.name());
     }
 
     @Override
@@ -108,13 +110,15 @@ public class VoiceEvaluateStreamConsumer extends AbstractStreamConsumer<Long> {
 
     @Override
     protected void markCompleted(Long sessionId) {
-        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.COMPLETED, null);
+        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.COMPLETED, null,
+                AsyncTaskStatus.PROCESSING.name());
         log.info("✅ 语音面试评估完成: sessionId={}", sessionId);
     }
 
     @Override
     protected void markFailed(Long sessionId, String error) {
         log.error("❌ 语音面试评估最终失败: sessionId={}, 原因: {}", sessionId, error);
-        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.FAILED, error);
+        voiceInterviewService.updateEvaluateStatus(sessionId, AsyncTaskStatus.FAILED, error,
+                AsyncTaskStatus.PROCESSING.name());
     }
 }

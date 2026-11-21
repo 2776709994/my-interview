@@ -39,11 +39,6 @@ public final class AsyncTaskStreamConstants {
      */
     public static final long POLL_INTERVAL_MS = 1000;
 
-    /**
-     * Stream 最大长度（生产端每次写入后裁剪，防止无限增长）
-     */
-    public static final int STREAM_MAX_LEN = 1000;
-
     // ========== 知识库向量化 Stream 配置 ==========
 
     /**

@@ -29,12 +29,24 @@ public record ResumeAnalysisResponse(
      * 五维评分详情
      */
     public record ScoreDetail(
-        int contentScore,       // 内容完整性 (0-25)
-        int structureScore,     // 结构清晰度 (0-20)
-        int skillMatchScore,    // 技能匹配度 (0-25)
-        int expressionScore,    // 表达专业性 (0-15)
-        int projectScore        // 项目经验 (0-15)
-    ) {}
+        int contentScore,
+        int structureScore,
+        int skillMatchScore,
+        int expressionScore,
+        int projectScore
+    ) {
+        public ScoreDetail {
+            contentScore = Math.clamp(contentScore, 0, 15);
+            structureScore = Math.clamp(structureScore, 0, 15);
+            skillMatchScore = Math.clamp(skillMatchScore, 0, 20);
+            expressionScore = Math.clamp(expressionScore, 0, 10);
+            projectScore = Math.clamp(projectScore, 0, 40);
+        }
+
+        public int total() {
+            return contentScore + structureScore + skillMatchScore + expressionScore + projectScore;
+        }
+    }
 
     /**
      * 改进建议

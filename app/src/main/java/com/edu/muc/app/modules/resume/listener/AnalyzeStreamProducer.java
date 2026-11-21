@@ -1,5 +1,6 @@
 package com.edu.muc.app.modules.resume.listener;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.edu.muc.app.common.async.AbstractStreamProducer;
 import com.edu.muc.app.common.constant.AsyncTaskStreamConstants;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
@@ -8,6 +9,8 @@ import com.edu.muc.app.modules.resume.mapper.ResumesMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 
@@ -35,6 +38,7 @@ public class AnalyzeStreamProducer extends AbstractStreamProducer<Long> {
      *
      * @return 是否入队成功
      */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public boolean send(Long resumeId) {
         return sendTask(resumeId);
     }
@@ -62,13 +66,11 @@ public class AnalyzeStreamProducer extends AbstractStreamProducer<Long> {
     @Override
     protected void onSendFailed(Long resumeId, String error) {
         try {
-            Resumes resume = resumesMapper.selectById(resumeId);
-            if (resume != null) {
-                resume.setAnalyzeStatus(AsyncTaskStatus.FAILED.name());
-                resume.setAnalyzeError(error);
-                resumesMapper.updateById(resume);
-                log.warn("简历分析任务入队失败，已标记为 FAILED: resumeId={}", resumeId);
-            }
+            resumesMapper.update(null, new LambdaUpdateWrapper<Resumes>()
+                    .eq(Resumes::getId, resumeId)
+                    .eq(Resumes::getAnalyzeStatus, AsyncTaskStatus.PENDING.name())
+                    .set(Resumes::getAnalyzeStatus, AsyncTaskStatus.FAILED.name())
+                    .set(Resumes::getAnalyzeError, error));
         } catch (Exception e) {
             log.error("标记简历分析失败状态时出错: resumeId={}", resumeId, e);
         }

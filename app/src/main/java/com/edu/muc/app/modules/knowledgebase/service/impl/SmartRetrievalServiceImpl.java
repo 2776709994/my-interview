@@ -14,6 +14,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -130,19 +132,12 @@ public class SmartRetrievalServiceImpl implements SmartRetrievalService {
         // 向量路命中的文档要求余弦距离 <= 阈值；仅关键词路命中（无向量距离）的文档视为强信号保留
         List<Map<String, Object>> filtered = rrfOrdered.stream()
                 .filter(doc -> {
+                    long id = ((Number) doc.get("id")).longValue();
                     Object distObj = doc.get("similarity_score");
-                    if (!(distObj instanceof Number)) {
-                        return true; // 仅关键词路命中
-                    }
-                    return ((Number) distObj).doubleValue() <= threshold;
+                    return keywordRank.containsKey(id)
+                            || (distObj instanceof Number distance && distance.doubleValue() <= threshold);
                 })
                 .collect(Collectors.toList());
-
-        if (filtered.isEmpty()) {
-            // 全部被过滤时，兜底返回最相似的 1 条（RRF 第一名）
-            log.warn("⚠️ 所有文档相似度都低于阈值，返回最相似的 1 个");
-            filtered = rrfOrdered.subList(0, Math.min(1, rrfOrdered.size()));
-        }
         log.info("✅ 过滤后剩余 {} 条候选（阈值: {}）", filtered.size(), threshold);
 
         // ========== 4. Rerank 精排（可选，失败自动降级为 RRF 顺序） ==========
@@ -160,9 +155,15 @@ public class SmartRetrievalServiceImpl implements SmartRetrievalService {
                     contents,
                     Math.min(finalTopK, contents.size()));
             if (order != null) {
-                List<Map<String, Object>> reranked = new ArrayList<>();
+                List<Map<String, Object>> reranked = new ArrayList<>(filtered.size());
+                Set<Integer> seen = new HashSet<>();
                 for (Integer idx : order) {
-                    if (idx >= 0 && idx < filtered.size()) {
+                    if (idx != null && idx >= 0 && idx < filtered.size() && seen.add(idx)) {
+                        reranked.add(filtered.get(idx));
+                    }
+                }
+                for (int idx = 0; idx < filtered.size(); idx++) {
+                    if (seen.add(idx)) {
                         reranked.add(filtered.get(idx));
                     }
                 }
@@ -197,7 +198,6 @@ public class SmartRetrievalServiceImpl implements SmartRetrievalService {
             doc.setCategory((String) map.get("category"));
             doc.setFileName((String) map.get("file_name"));
             doc.setContent((String) map.get("content"));
-            doc.setContentEmbedding((String) map.get("content_embedding"));
 
             Object fileSizeObj = map.get("file_size");
             if (fileSizeObj instanceof Number) {

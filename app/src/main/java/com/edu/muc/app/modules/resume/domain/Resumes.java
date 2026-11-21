@@ -2,6 +2,7 @@ package com.edu.muc.app.modules.resume.domain;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
@@ -59,7 +60,7 @@ public class Resumes {
     /**
      * 
      */
-    private String originalFilename = "未命名简历";;
+    private String originalFilename = "未命名简历";
 
     /**
      * 
@@ -80,6 +81,9 @@ public class Resumes {
      * 
      */
     private LocalDateTime uploadedAt;
+
+    @TableField(exist = false)
+    private boolean duplicate;
 
 
 }

@@ -20,7 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StreamUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -45,6 +45,7 @@ public class VoiceInterviewEvaluationService {
     private final VoiceInterviewMessageMapper messageMapper;
     private final VoiceInterviewSessionMapper sessionMapper;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
 
     // 加载评估提示词模板
     private static final String SYSTEM_PROMPT_TEMPLATE;
@@ -73,6 +74,9 @@ public class VoiceInterviewEvaluationService {
             log.info("开始生成语音面试评估: sessionId={}", sessionId);
 
             VoiceInterviewSessionEntity session = getSession(sessionId);
+            if (evaluationExists(sessionId)) {
+                return;
+            }
             List<VoiceInterviewMessageEntity> messages = messageMapper.selectList(
                     new LambdaQueryWrapper<VoiceInterviewMessageEntity>()
                             .eq(VoiceInterviewMessageEntity::getSessionId, sessionId)
@@ -81,7 +85,7 @@ public class VoiceInterviewEvaluationService {
 
             if (messages.isEmpty()) {
                 log.warn("语音面试会话无对话记录，生成空评估结果: sessionId={}", sessionId);
-                saveEmptyEvaluationTransactional(sessionId, session);
+                saveEmptyEvaluation(sessionId, session);
                 return;
             }
 
@@ -112,7 +116,7 @@ public class VoiceInterviewEvaluationService {
             Map<String, Object> result = objectMapper.readValue(
                     JsonUtils.extractJson(aiResponse), new TypeReference<Map<String, Object>>() {});
 
-            saveEvaluationTransactional(sessionId, session, result);
+            saveEvaluation(sessionId, session, result);
 
         } catch (BusinessException e) {
             throw e;
@@ -193,12 +197,11 @@ public class VoiceInterviewEvaluationService {
         return "技术问题";
     }
 
-    @Transactional
-    public void saveEvaluationTransactional(Long sessionId, VoiceInterviewSessionEntity session,
+    private void saveEvaluation(Long sessionId, VoiceInterviewSessionEntity session,
                                  Map<String, Object> result) {
         try {
             Object scoreObj = result.getOrDefault("overallScore", 0);
-            int overallScore = scoreObj instanceof Number ? ((Number) scoreObj).intValue() : 0;
+            int overallScore = scoreObj instanceof Number score ? Math.clamp(score.intValue(), 0, 100) : 0;
 
             @SuppressWarnings("unchecked")
             List<String> strengths = (List<String>) result.get("strengths");
@@ -230,7 +233,7 @@ public class VoiceInterviewEvaluationService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-            evaluationMapper.insert(entity);
+            persistEvaluation(entity);
             log.info("评估结果已保存: sessionId={}, score={}", sessionId, entity.getOverallScore());
         } catch (Exception e) {
             log.error("保存评估结果失败: sessionId={}", sessionId, e);
@@ -239,8 +242,7 @@ public class VoiceInterviewEvaluationService {
         }
     }
 
-    @Transactional
-    public void saveEmptyEvaluationTransactional(Long sessionId, VoiceInterviewSessionEntity session) {
+    private void saveEmptyEvaluation(Long sessionId, VoiceInterviewSessionEntity session) {
         try {
             VoiceInterviewEvaluationEntity entity = VoiceInterviewEvaluationEntity.builder()
                 .sessionId(sessionId)
@@ -255,13 +257,31 @@ public class VoiceInterviewEvaluationService {
                 .createdAt(LocalDateTime.now())
                 .build();
 
-            evaluationMapper.insert(entity);
+            persistEvaluation(entity);
             log.info("空评估结果已保存: sessionId={}", sessionId);
         } catch (Exception e) {
             log.error("保存空评估结果失败: sessionId={}", sessionId, e);
             throw new BusinessException(ErrorCode.VOICE_EVALUATION_FAILED,
                 "保存空评估失败: " + e.getMessage());
         }
+    }
+
+    private boolean evaluationExists(Long sessionId) {
+        return evaluationMapper.exists(new LambdaQueryWrapper<VoiceInterviewEvaluationEntity>()
+                .eq(VoiceInterviewEvaluationEntity::getSessionId, sessionId));
+    }
+
+    private void persistEvaluation(VoiceInterviewEvaluationEntity evaluation) {
+        transactionTemplate.executeWithoutResult(ignored -> {
+            Long sessionId = evaluation.getSessionId();
+            VoiceInterviewSessionEntity session = sessionMapper.selectOne(
+                    new LambdaQueryWrapper<VoiceInterviewSessionEntity>()
+                            .eq(VoiceInterviewSessionEntity::getId, sessionId)
+                            .last("FOR UPDATE"));
+            if (session != null && !evaluationExists(sessionId)) {
+                evaluationMapper.insert(evaluation);
+            }
+        });
     }
 
     private VoiceEvaluationDetailDTO buildDetailDTO(VoiceInterviewEvaluationEntity entity) {

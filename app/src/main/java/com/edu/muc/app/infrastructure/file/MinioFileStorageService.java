@@ -4,7 +4,6 @@ import io.minio.*;
 import io.minio.http.Method;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -133,15 +132,13 @@ public class MinioFileStorageService implements FileStorageService {
         );
         log.info(" 文件大小: {} bytes, Content-Type: {}", stat.size(), stat.contentType());
         
-        // 下载为字节数组
-        byte[] fileBytes = minioClient.getObject(
+        try (InputStream input = minioClient.getObject(
                 GetObjectArgs.builder()
                         .bucket(bucketName)
                         .object(objectName)
                         .build()
-        ).readAllBytes();
-        
-        log.info("✅ 文件下载成功，字节数组长度: {} bytes", fileBytes.length);
-        return fileBytes;
+        )) {
+            return input.readAllBytes();
+        }
     }
 }

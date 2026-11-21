@@ -14,15 +14,20 @@ import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.connection.stream.StreamRecords;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.data.redis.serializer.RedisSerializer;
 
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Redis Stream 消费者模板基类。
@@ -48,10 +53,19 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 public abstract class AbstractStreamConsumer<T> {
 
+    // 本项目每条流只有一个消费者组。确认和回收消息必须同时完成。
+    private static final DefaultRedisScript<Long> ACK_AND_DELETE = new DefaultRedisScript<>("""
+            local acked = redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+            if acked == 1 then redis.call('XDEL', KEYS[1], ARGV[2]) end
+            return acked
+            """, Long.class);
+
     protected final RedisTemplate<String, Object> redisTemplate;
     private final StreamPendingRecoverer pendingRecoverer;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final Set<RecordId> activeRecords = ConcurrentHashMap.newKeySet();
+    private final Map<T, TaskLock> taskLocks = new ConcurrentHashMap<>();
     private Thread consumerThread;
     private String consumerName;
     private volatile boolean groupReady = false;
@@ -134,6 +148,13 @@ public abstract class AbstractStreamConsumer<T> {
                 log.warn("{} consumer Redis连接断开，5秒后重试: {}", taskDisplayName(), e.getMessage());
                 sleepQuietly(5000);
             } catch (Exception e) {
+                if (!running.get()) {
+                    break;
+                }
+                if (hasRedisError(e, "NOGROUP")) {
+                    groupReady = false;
+                    continue;
+                }
                 log.error("{} consumer 拉取消息异常", taskDisplayName(), e);
                 sleepQuietly(5000);
             }
@@ -152,15 +173,24 @@ public abstract class AbstractStreamConsumer<T> {
      */
     private boolean ensureGroup() {
         try {
-            redisTemplate.opsForStream().createGroup(streamKey(), groupName());
+            redisTemplate.opsForStream().createGroup(streamKey(), ReadOffset.from("0-0"), groupName());
             return true;
         } catch (Exception e) {
-            if (e.getMessage() != null && e.getMessage().contains("BUSYGROUP")) {
+            if (hasRedisError(e, "BUSYGROUP")) {
                 return true;
             }
             log.debug("{} consumer group 未就绪（等待 Stream 创建）: {}", taskDisplayName(), e.getMessage());
             return false;
         }
+    }
+
+    private boolean hasRedisError(Throwable error, String code) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause.getMessage() != null && cause.getMessage().contains(code)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 解析载荷并提交到业务线程池；解析失败 ACK 丢弃（毒消息） */
@@ -180,7 +210,38 @@ public abstract class AbstractStreamConsumer<T> {
             return;
         }
         int retryCount = parseRetryCount(record.getValue());
-        executor().submit(() -> processRecord(record.getId(), payload, retryCount));
+        if (!activeRecords.add(record.getId())) {
+            return;
+        }
+        try {
+            executor().execute(() -> processSerially(record.getId(), payload, retryCount));
+        } catch (RuntimeException e) {
+            activeRecords.remove(record.getId());
+            throw e;
+        }
+    }
+
+    private void processSerially(RecordId id, T payload, int retryCount) {
+        TaskLock taskLock = taskLocks.compute(payload, (key, existing) -> {
+            TaskLock lock = existing == null ? new TaskLock() : existing;
+            lock.users++;
+            return lock;
+        });
+        taskLock.lock.lock();
+        try {
+            processRecord(id, payload, retryCount);
+        } catch (Exception e) {
+            log.error("{} task 状态写入失败，保留待恢复消息: {}", taskDisplayName(), id, e);
+        } finally {
+            activeRecords.remove(id);
+            taskLock.lock.unlock();
+            taskLocks.computeIfPresent(payload, (key, lock) -> --lock.users == 0 ? null : lock);
+        }
+    }
+
+    private static final class TaskLock {
+        private final ReentrantLock lock = new ReentrantLock();
+        private int users;
     }
 
     /**
@@ -190,16 +251,12 @@ public abstract class AbstractStreamConsumer<T> {
     private void processRecord(RecordId messageId, T payload, int retryCount) {
         log.info("Processing {} task: payload={}, messageId={}, retryCount={}",
                 taskDisplayName(), payloadIdentifier(payload), messageId, retryCount);
+        if (shouldSkip(payload) || !tryMarkProcessing(payload)) {
+            ack(messageId);
+            log.info("{} task skipped: {}", taskDisplayName(), payloadIdentifier(payload));
+            return;
+        }
         try {
-            if (shouldSkip(payload)) {
-                ack(messageId);
-                log.info("{} task skipped: {}", taskDisplayName(), payloadIdentifier(payload));
-                return;
-            }
-            if (!tryMarkProcessing(payload)) {
-                handleNotClaimed(messageId, payload, retryCount);
-                return;
-            }
             processBusiness(payload);
             markCompleted(payload);
             ack(messageId);
@@ -212,39 +269,10 @@ public abstract class AbstractStreamConsumer<T> {
                 retryMessage(payload, retryCount + 1);
             } else {
                 markFailed(payload, truncateError(
-                        taskDisplayName() + " failed after " + retryCount + " attempts: " + e.getMessage()));
+                        taskDisplayName() + " failed after " + (retryCount + 1) + " attempts: " + e.getMessage()));
             }
             ack(messageId);
         }
-    }
-
-    /**
-     * 未领取（状态守卫不通过）的处理：有界重新入队，失败则不 ACK 留给 PEL 恢复器。
-     * <p>
-     * 未领取通常是竞态窗口：生产者事务尚未提交（消费者读到旧的 FAILED/COMPLETED
-     * 等状态），或状态恰好在 shouldSkip 与领取之间流转。重新入队由下一次投递时的
-     * 最新状态决定，避免任务因瞬时旧状态被静默丢弃；超过重试次数则放弃并告警。
-     * 注意：未领取意味着任务不属于本次投递，<b>绝不调用 markFailed</b>，
-     * 防止覆盖其他投递正在推进的真实状态。
-     * </p>
-     */
-    private void handleNotClaimed(RecordId messageId, T payload, int retryCount) {
-        if (retryCount < AsyncTaskStreamConstants.MAX_RETRY_COUNT) {
-            try {
-                log.info("{} task not claimed（状态守卫不通过）, re-enqueue: messageId={}, retryCount={}",
-                        taskDisplayName(), messageId, retryCount);
-                retryMessage(payload, retryCount + 1);
-            } catch (Exception e) {
-                // 重新入队失败：不 ACK，消息留在 PEL 由恢复器兜底重投
-                log.warn("{} task 重新入队失败，消息留在 PEL: messageId={}, error={}",
-                        taskDisplayName(), messageId, e.getMessage());
-                return;
-            }
-        } else {
-            log.warn("{} task not claimed after {} retries, dropping: payload={}",
-                    taskDisplayName(), retryCount, payloadIdentifier(payload));
-        }
-        ack(messageId);
     }
 
     /**
@@ -257,6 +285,9 @@ public abstract class AbstractStreamConsumer<T> {
         try {
             RecordId id = redisTemplate.opsForStream().add(
                     StreamRecords.newRecord().in(streamKey()).ofMap(message));
+            if (id == null) {
+                throw new IllegalStateException("Redis 未返回重试消息 ID");
+            }
             log.warn("{} task re-enqueued for retry #{}: payload={}, messageId={}",
                     taskDisplayName(), nextRetryCount, payloadIdentifier(payload), id);
         } catch (Exception e) {
@@ -296,7 +327,8 @@ public abstract class AbstractStreamConsumer<T> {
 
     private void ack(RecordId messageId) {
         try {
-            redisTemplate.opsForStream().acknowledge(streamKey(), groupName(), messageId);
+            redisTemplate.execute(ACK_AND_DELETE, RedisSerializer.string(), null,
+                    List.of(streamKey()), groupName(), messageId.getValue());
         } catch (Exception e) {
             log.error("Failed to ack stream message: messageId={}", messageId, e);
         }

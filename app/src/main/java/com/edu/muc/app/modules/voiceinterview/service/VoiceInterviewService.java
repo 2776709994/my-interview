@@ -1,6 +1,7 @@
 package com.edu.muc.app.modules.voiceinterview.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.common.exception.ErrorCode;
 import com.edu.muc.app.common.model.AsyncTaskStatus;
@@ -20,7 +21,11 @@ import com.edu.muc.app.modules.voiceinterview.model.VoiceInterviewSessionStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -45,6 +50,7 @@ public class VoiceInterviewService {
     private final VoiceInterviewEvaluationMapper evaluationMapper;
     private final VoiceInterviewProperties properties;
     private final VoiceEvaluateStreamProducer voiceEvaluateStreamProducer;
+    private final TransactionTemplate transactionTemplate;
 
     private static final String DEFAULT_USER_ID = "default";
 
@@ -94,7 +100,7 @@ public class VoiceInterviewService {
     @Transactional
     public void endSessionIfInProgress(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionIdLong);
+        VoiceInterviewSessionEntity session = lockSession(sessionIdLong);
         if (session == null || session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
             return;
         }
@@ -108,18 +114,15 @@ public class VoiceInterviewService {
     @Transactional
     public void endSession(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionIdLong);
+        VoiceInterviewSessionEntity session = lockSession(sessionIdLong);
 
-        if (session == null) {
+        if (session == null || (session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS
+                && session.getStatus() != VoiceInterviewSessionStatus.PAUSED)) {
             log.warn("Session not found: {}", sessionId);
             return;
         }
 
         endSession(session);
-        // 入队失败时由调用方直接标记评估失败，避免前端一直停留在等待状态
-        if (!voiceEvaluateStreamProducer.sendEvaluateTask(sessionId)) {
-            updateEvaluateStatus(sessionIdLong, AsyncTaskStatus.FAILED, "评估任务入队失败");
-        }
     }
 
     private void endSession(VoiceInterviewSessionEntity session) {
@@ -127,10 +130,10 @@ public class VoiceInterviewService {
         session.setCurrentPhase(VoiceInterviewSessionEntity.InterviewPhase.COMPLETED);
         session.setStatus(VoiceInterviewSessionStatus.COMPLETED);
         session.setActualDuration((int) Duration.between(session.getStartTime(), LocalDateTime.now()).toSeconds());
-        session.setEvaluateStatus(AsyncTaskStatus.PENDING.name());
         session.setUpdatedAt(LocalDateTime.now());
 
         sessionMapper.updateById(session);
+        scheduleEvaluation(session.getId());
 
         log.info("Ended voice interview session: {}, duration: {} seconds, evaluation triggered",
                 session.getId(), session.getActualDuration());
@@ -156,9 +159,9 @@ public class VoiceInterviewService {
     @Transactional
     public void startPhase(String sessionId, String phaseStr) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionIdLong);
+        VoiceInterviewSessionEntity session = lockSession(sessionIdLong);
 
-        if (session == null) {
+        if (session == null || session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
             log.warn("Cannot start phase - session not found: {}", sessionId);
             return;
         }
@@ -193,9 +196,9 @@ public class VoiceInterviewService {
     @Transactional
     public void saveMessage(String sessionId, String userText, String aiText) {
         Long sessionIdLong = parseSessionId(sessionId);
-        VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionIdLong);
+        VoiceInterviewSessionEntity session = lockSession(sessionIdLong);
 
-        if (session == null) {
+        if (session == null || session.getStatus() == VoiceInterviewSessionStatus.COMPLETED) {
             log.warn("Cannot save message - session not found: {}", sessionId);
             return;
         }
@@ -205,7 +208,7 @@ public class VoiceInterviewService {
 
         boolean answerAttached = normalizedUserText != null
             && fillLatestUnansweredQuestion(sessionIdLong, normalizedUserText);
-        if (normalizedAiText == null) {
+        if (normalizedAiText == null && (normalizedUserText == null || answerAttached)) {
             return;
         }
 
@@ -286,7 +289,7 @@ public class VoiceInterviewService {
     public void pauseSession(String sessionId, String reason) {
         Long sessionIdLong = parseSessionId(sessionId);
 
-        VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionIdLong);
+        VoiceInterviewSessionEntity session = lockSession(sessionIdLong);
         if (session == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
         }
@@ -312,7 +315,7 @@ public class VoiceInterviewService {
     public SessionResponseDTO resumeSession(String sessionId) {
         Long sessionIdLong = parseSessionId(sessionId);
 
-        VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionIdLong);
+        VoiceInterviewSessionEntity session = lockSession(sessionIdLong);
         if (session == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND, "会话不存在: " + sessionId);
         }
@@ -430,20 +433,18 @@ public class VoiceInterviewService {
     /**
      * 更新评估状态
      */
-    public void updateEvaluateStatus(Long sessionId, AsyncTaskStatus status, String error) {
-        try {
-            VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionId);
-            if (session != null) {
-                session.setEvaluateStatus(status.name());
-                session.setEvaluateError(error);
-                session.setUpdatedAt(LocalDateTime.now());
-                sessionMapper.updateById(session);
-                log.debug("Evaluation status updated: sessionId={}, status={}", sessionId, status);
-            }
-        } catch (Exception e) {
-            log.error("Failed to update evaluation status: sessionId={}, status={}, error={}",
-                    sessionId, status, e.getMessage(), e);
+    public boolean updateEvaluateStatus(Long sessionId, AsyncTaskStatus status, String error,
+                                        String... expectedStatuses) {
+        LambdaUpdateWrapper<VoiceInterviewSessionEntity> update = new LambdaUpdateWrapper<VoiceInterviewSessionEntity>()
+                .eq(VoiceInterviewSessionEntity::getId, sessionId)
+                .eq(VoiceInterviewSessionEntity::getStatus, VoiceInterviewSessionStatus.COMPLETED)
+                .set(VoiceInterviewSessionEntity::getEvaluateStatus, status.name())
+                .set(VoiceInterviewSessionEntity::getEvaluateError, error)
+                .set(VoiceInterviewSessionEntity::getUpdatedAt, LocalDateTime.now());
+        if (expectedStatuses.length > 0) {
+            update.in(VoiceInterviewSessionEntity::getEvaluateStatus, (Object[]) expectedStatuses);
         }
+        return sessionMapper.update(null, update) > 0;
     }
 
     /**
@@ -451,8 +452,42 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void triggerEvaluation(Long sessionId) {
+        VoiceInterviewSessionEntity session = lockSession(sessionId);
+        if (session == null) {
+            throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
+        }
+        if (session.getStatus() != VoiceInterviewSessionStatus.COMPLETED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "请先结束面试再生成评估");
+        }
+        String status = session.getEvaluateStatus();
+        if (status == null || AsyncTaskStatus.FAILED.name().equals(status)
+                || (AsyncTaskStatus.PENDING.name().equals(status)
+                && (session.getUpdatedAt() == null
+                || session.getUpdatedAt().isBefore(LocalDateTime.now().minusMinutes(5))))) {
+            scheduleEvaluation(sessionId);
+        }
+    }
+
+    private void scheduleEvaluation(Long sessionId) {
         updateEvaluateStatus(sessionId, AsyncTaskStatus.PENDING, null);
-        voiceEvaluateStreamProducer.sendEvaluateTask(sessionId.toString());
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                if (!voiceEvaluateStreamProducer.sendEvaluateTask(sessionId.toString())) {
+                    TransactionTemplate failureTransaction =
+                            new TransactionTemplate(transactionTemplate.getTransactionManager());
+                    failureTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                    failureTransaction.executeWithoutResult(ignored -> updateEvaluateStatus(
+                            sessionId, AsyncTaskStatus.FAILED, "评估任务入队失败", AsyncTaskStatus.PENDING.name()));
+                }
+            }
+        });
+    }
+
+    private VoiceInterviewSessionEntity lockSession(Long sessionId) {
+        return sessionMapper.selectOne(new LambdaQueryWrapper<VoiceInterviewSessionEntity>()
+                .eq(VoiceInterviewSessionEntity::getId, sessionId)
+                .last("FOR UPDATE"));
     }
 
     /**
@@ -460,7 +495,7 @@ public class VoiceInterviewService {
      */
     @Transactional
     public void deleteSession(Long sessionId) {
-        VoiceInterviewSessionEntity session = sessionMapper.selectById(sessionId);
+        VoiceInterviewSessionEntity session = lockSession(sessionId);
         if (session == null) {
             throw new BusinessException(ErrorCode.VOICE_SESSION_NOT_FOUND, "会话不存在: " + sessionId);
         }
@@ -489,6 +524,10 @@ public class VoiceInterviewService {
 
         int cleaned = 0;
         for (VoiceInterviewSessionEntity session : staleSessions) {
+            session = lockSession(session.getId());
+            if (session == null || session.getStatus() != VoiceInterviewSessionStatus.IN_PROGRESS) {
+                continue;
+            }
             log.info("Cleaning up stale IN_PROGRESS session {}, started at {}",
                 session.getId(), session.getStartTime());
             endSession(session);
@@ -504,11 +543,13 @@ public class VoiceInterviewService {
 
         for (VoiceInterviewSessionEntity session : stuckEvals) {
             log.info("Resetting stuck PROCESSING evaluation for session {}", session.getId());
-            session.setEvaluateStatus(AsyncTaskStatus.FAILED.name());
-            session.setEvaluateError("评估超时，请重新触发");
-            session.setUpdatedAt(LocalDateTime.now());
-            sessionMapper.updateById(session);
-            cleaned++;
+            cleaned += sessionMapper.update(null, new LambdaUpdateWrapper<VoiceInterviewSessionEntity>()
+                    .eq(VoiceInterviewSessionEntity::getId, session.getId())
+                    .eq(VoiceInterviewSessionEntity::getEvaluateStatus, AsyncTaskStatus.PROCESSING.name())
+                    .lt(VoiceInterviewSessionEntity::getUpdatedAt, evalStaleThreshold)
+                    .set(VoiceInterviewSessionEntity::getEvaluateStatus, AsyncTaskStatus.FAILED.name())
+                    .set(VoiceInterviewSessionEntity::getEvaluateError, "评估超时，请重新触发")
+                    .set(VoiceInterviewSessionEntity::getUpdatedAt, LocalDateTime.now()));
         }
 
         return cleaned;

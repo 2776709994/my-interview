@@ -25,6 +25,9 @@
         SELECT *, (content_embedding <=> #{queryVector}::vector) AS similarity_score
         FROM knowledge_documents
         WHERE parent_id IS NOT NULL
+          AND content_embedding IS NOT NULL
+          AND EXISTS (SELECT 1 FROM knowledge_documents p
+                      WHERE p.id = knowledge_documents.parent_id AND p.vector_status = 'COMPLETED')
         ORDER BY similarity_score ASC
         LIMIT #{limit}
         ]]>
@@ -36,6 +39,9 @@
         SELECT *, (content_embedding <=> #{queryVector}::vector) AS similarity_score
         FROM knowledge_documents
         WHERE parent_id IS NOT NULL
+          AND content_embedding IS NOT NULL
+          AND EXISTS (SELECT 1 FROM knowledge_documents p
+                      WHERE p.id = knowledge_documents.parent_id AND p.vector_status = 'COMPLETED')
         ]]>
         <if test="knowledgeBaseIds != null and !knowledgeBaseIds.isEmpty()">
             AND parent_id IN
@@ -51,9 +57,12 @@
     <!-- 关键词检索（pg_trgm）：word_similarity 模糊子串打分排序（中文无需分词器，取相对 Top-K） -->
     <select id="searchByKeyword" resultType="map">
         <![CDATA[
-        SELECT *, word_similarity(content, #{keyword}) AS kw_score
+        SELECT *, word_similarity(#{keyword}, content) AS kw_score
         FROM knowledge_documents
         WHERE parent_id IS NOT NULL
+          AND word_similarity(#{keyword}, content) > 0
+          AND EXISTS (SELECT 1 FROM knowledge_documents p
+                      WHERE p.id = knowledge_documents.parent_id AND p.vector_status = 'COMPLETED')
         ]]>
         <if test="knowledgeBaseIds != null and !knowledgeBaseIds.isEmpty()">
             AND parent_id IN

@@ -1,5 +1,6 @@
 package com.edu.muc.app.modules.interviewschedule.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.edu.muc.app.common.exception.BusinessException;
 import com.edu.muc.app.common.exception.ErrorCode;
 import com.edu.muc.app.modules.interviewschedule.mapper.InterviewScheduleMapper;
@@ -36,7 +37,10 @@ public class InterviewScheduleService {
 
     @Transactional
     public InterviewScheduleDTO update(Long id, CreateInterviewRequest request) {
-        InterviewScheduleEntity entity = getByIdOrThrow(id);
+        InterviewScheduleEntity entity = requireEntity(
+                mapper.selectOne(new LambdaQueryWrapper<InterviewScheduleEntity>()
+                        .eq(InterviewScheduleEntity::getId, id)
+                        .last("FOR UPDATE")), id);
         BeanUtils.copyProperties(request, entity, "id", "status", "createdAt", "updatedAt");
         entity.setUpdatedAt(LocalDateTime.now());
         mapper.updateById(entity);
@@ -50,7 +54,10 @@ public class InterviewScheduleService {
 
     @Transactional
     public InterviewScheduleDTO updateStatus(Long id, InterviewStatus status) {
-        InterviewScheduleEntity entity = getByIdOrThrow(id);
+        InterviewScheduleEntity entity = requireEntity(
+                mapper.selectOne(new LambdaQueryWrapper<InterviewScheduleEntity>()
+                        .eq(InterviewScheduleEntity::getId, id)
+                        .last("FOR UPDATE")), id);
         entity.setStatus(status.name());
         entity.setUpdatedAt(LocalDateTime.now());
         mapper.updateById(entity);
@@ -58,27 +65,24 @@ public class InterviewScheduleService {
     }
 
     public List<InterviewScheduleDTO> getAll(String status, LocalDateTime start, LocalDateTime end) {
-        List<InterviewScheduleEntity> entities;
-
-        if (start != null && end != null) {
-            entities = mapper.findByInterviewTimeBetween(start, end);
-        } else if (status != null) {
-            entities = mapper.findByStatus(status);
-        } else {
-            entities = mapper.selectList(null);
+        if (start != null && end != null && start.isAfter(end)) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "开始时间不能晚于结束时间");
         }
-
-        return entities.stream()
+        return mapper.selectList(new LambdaQueryWrapper<InterviewScheduleEntity>()
+                .eq(status != null, InterviewScheduleEntity::getStatus, status)
+                .ge(start != null, InterviewScheduleEntity::getInterviewTime, start)
+                .le(end != null, InterviewScheduleEntity::getInterviewTime, end)
+                .orderByAsc(InterviewScheduleEntity::getInterviewTime, InterviewScheduleEntity::getId))
+            .stream()
             .map(this::toDTO)
             .collect(Collectors.toList());
     }
 
     public InterviewScheduleDTO getById(Long id) {
-        return toDTO(getByIdOrThrow(id));
+        return toDTO(requireEntity(mapper.selectById(id), id));
     }
 
-    private InterviewScheduleEntity getByIdOrThrow(Long id) {
-        InterviewScheduleEntity entity = mapper.selectById(id);
+    private InterviewScheduleEntity requireEntity(InterviewScheduleEntity entity, Long id) {
         if (entity == null) {
             throw new BusinessException(ErrorCode.INTERVIEW_SCHEDULE_NOT_FOUND, "面试日程不存在: " + id);
         }

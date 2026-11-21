@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -52,6 +53,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
     private final ChatClient chatClient;
     private final UnifiedEvaluationService unifiedEvaluationService;
     private final ExecutorService evaluationExecutor;
+    private final TransactionTemplate transactionTemplate;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -62,6 +64,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
                                   InterviewAnswerMapper answerMapper,
                                   ChatClient chatClient,
                                   UnifiedEvaluationService unifiedEvaluationService,
+                                  TransactionTemplate transactionTemplate,
                                   @Qualifier("interviewEvaluationExecutor") ExecutorService evaluationExecutor) {
         super(redisTemplate, pendingRecoverer);
         this.sessionMapper = sessionMapper;
@@ -69,6 +72,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
         this.answerMapper = answerMapper;
         this.chatClient = chatClient;
         this.unifiedEvaluationService = unifiedEvaluationService;
+        this.transactionTemplate = transactionTemplate;
         this.evaluationExecutor = evaluationExecutor;
     }
 
@@ -121,7 +125,8 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
     @Override
     protected boolean shouldSkip(String sessionId) {
         InterviewSession session = sessionMapper.selectById(sessionId);
-        return session != null && EvaluateStatus.COMPLETED.getCode().equals(session.getEvaluateStatus());
+        return session == null || !SessionStatus.COMPLETED.getCode().equals(session.getStatus())
+                || EvaluateStatus.COMPLETED.getCode().equals(session.getEvaluateStatus());
     }
 
     @Override
@@ -129,6 +134,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
         // 状态守卫：仅 PENDING/PROCESSING（重试/宕机重投）或未初始化时允许领取
         return sessionMapper.update(null, new LambdaUpdateWrapper<InterviewSession>()
                 .eq(InterviewSession::getSessionId, sessionId)
+                .eq(InterviewSession::getStatus, SessionStatus.COMPLETED.getCode())
                 .and(w -> w.isNull(InterviewSession::getEvaluateStatus)
                         .or()
                         .in(InterviewSession::getEvaluateStatus,
@@ -162,51 +168,58 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
         }
 
         // 2. 白卷处理：生成零分评估报告，不消耗 AI 调用
-        if (answers.isEmpty()) {
+        if (answers.stream().noneMatch(answer -> answer.getAnswer() != null && !answer.getAnswer().isBlank())) {
             log.warn("⚠️ 会话 {} 用户未回答任何问题，生成零分评估报告", sessionId);
-            generateEmptyEvaluation(session, questions);
+            persistReport(sessionId, () -> generateEmptyEvaluation(session));
             return;
         }
 
         // 3. 优先使用统一评估服务（分批评估 + 结构化输出重试 + 二次汇总）
+        EvaluationReport report;
         try {
             List<QaRecord> qaRecords = buildQaRecords(questions, answers);
-            EvaluationReport report = unifiedEvaluationService.evaluate(
+            report = unifiedEvaluationService.evaluate(
                     chatClient, sessionId, qaRecords, session.getResumeText());
-            applyEvaluationReport(session, answers, report);
-            log.info("✅ 统一评估服务评估完成, sessionId: {}", sessionId);
-            return;
         } catch (Exception e) {
             log.warn("⚠️ 统一评估服务调用失败，降级为简易评估, sessionId: {}, error: {}",
                     sessionId, e.getMessage());
+            generateEvaluationLegacy(session, questions, answers);
+            return;
         }
-
-        // 4. 降级：简易评估（单次 AI 调用 + 手写 prompt）
-        generateEvaluationLegacy(session, questions, answers);
-        log.info("✅ 评估报告生成完成（简易评估）, sessionId: {}", sessionId);
+        persistReport(sessionId, () -> applyEvaluationReport(session, answers, report));
     }
 
     @Override
     protected void markCompleted(String sessionId) {
-        InterviewSession session = sessionMapper.selectById(sessionId);
-        if (session == null) {
-            return;
-        }
-        session.setEvaluateStatus(EvaluateStatus.COMPLETED.getCode());
-        session.setStatus(SessionStatus.EVALUATED.getCode());
-        session.setEvaluatedAt(LocalDateTime.now());
-        sessionMapper.updateById(session);
+        // 报告与完成状态在同一个事务中提交。
     }
 
     @Override
     protected void markFailed(String sessionId, String error) {
         log.error("❌ 面试评估最终失败: sessionId={}, 原因: {}", sessionId, error);
-        InterviewSession session = sessionMapper.selectById(sessionId);
-        if (session != null) {
-            session.setEvaluateStatus(EvaluateStatus.FAILED.getCode());
-            session.setEvaluateError(error);
-            sessionMapper.updateById(session);
-        }
+        sessionMapper.update(null, new LambdaUpdateWrapper<InterviewSession>()
+                .eq(InterviewSession::getSessionId, sessionId)
+                .eq(InterviewSession::getEvaluateStatus, EvaluateStatus.PROCESSING.getCode())
+                .set(InterviewSession::getEvaluateStatus, EvaluateStatus.FAILED.getCode())
+                .set(InterviewSession::getEvaluateError, error));
+    }
+
+    private void persistReport(String sessionId, Runnable saveDetails) {
+        transactionTemplate.executeWithoutResult(ignored -> {
+            InterviewSession current = sessionMapper.selectOne(new LambdaQueryWrapper<InterviewSession>()
+                    .eq(InterviewSession::getSessionId, sessionId)
+                    .last("FOR UPDATE"));
+            if (current == null || !EvaluateStatus.PROCESSING.getCode().equals(current.getEvaluateStatus())) {
+                return;
+            }
+            saveDetails.run();
+            sessionMapper.update(null, new LambdaUpdateWrapper<InterviewSession>()
+                    .eq(InterviewSession::getSessionId, sessionId)
+                    .set(InterviewSession::getEvaluateStatus, EvaluateStatus.COMPLETED.getCode())
+                    .set(InterviewSession::getEvaluateError, null)
+                    .set(InterviewSession::getStatus, SessionStatus.EVALUATED.getCode())
+                    .set(InterviewSession::getEvaluatedAt, LocalDateTime.now()));
+        });
     }
 
     /**
@@ -309,17 +322,17 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
                     .findFirst()
                     .orElse(null);
 
-            if (a != null) {
+            if (a != null && a.getAnswer() != null && !a.getAnswer().isBlank()) {
                 evaluationPrompt.append(String.format(
                         "问题 %d：%s\n类别：%s\n回答：%s\n\n",
-                        i + 1, q.getQuestion(), q.getCategory(), a.getAnswer()
+                        q.getQuestionIndex(), q.getQuestion(), q.getCategory(), a.getAnswer()
                 ));
             }
         }
 
         evaluationPrompt.append("\n请输出 JSON 格式，包含：");
         evaluationPrompt.append("overallScore（总分0-100）, overallFeedback, strengths（数组）, improvements（数组）, ");
-        evaluationPrompt.append("questionEvaluations（数组，每项包含questionIndex, score, feedback）");
+        evaluationPrompt.append("questionEvaluations（数组，每项的 questionIndex 使用原题编号，另含 score, feedback）");
 
         log.info("🤖 调用 AI 进行评估（简易模式）...");
         String aiResponse = chatClient.prompt()
@@ -338,7 +351,7 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
 
         // 更新会话（安全类型转换）
         Object scoreObj = result.getOrDefault("overallScore", 0);
-        session.setOverallScore(scoreObj instanceof Number ? ((Number) scoreObj).intValue() : 0);
+        session.setOverallScore(scoreObj instanceof Number score ? Math.clamp(score.intValue(), 0, 100) : 0);
         session.setOverallFeedback((String) result.get("overallFeedback"));
 
         @SuppressWarnings("unchecked")
@@ -348,14 +361,15 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
         @SuppressWarnings("unchecked")
         List<String> improvements = (List<String>) result.get("improvements");
         session.setImprovementsJson(MAPPER.writeValueAsString(improvements != null ? improvements : List.of()));
-        sessionMapper.updateById(session);
-
-        // 更新每个问题的评分
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> questionEvaluations =
                 (List<Map<String, Object>>) result.get("questionEvaluations");
 
-        if (questionEvaluations != null) {
+        persistReport(sessionId, () -> {
+            sessionMapper.updateById(session);
+            if (questionEvaluations == null) {
+                return;
+            }
             for (Map<String, Object> eval : questionEvaluations) {
                 int qIndex = JsonUtils.safeGetInt(eval.get("questionIndex"));
                 double score = JsonUtils.safeGetDouble(eval.get("score"));
@@ -364,22 +378,24 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
                 InterviewAnswer answer = answerMapper.selectOne(
                         new LambdaQueryWrapper<InterviewAnswer>()
                                 .eq(InterviewAnswer::getSessionId, sessionId)
-                                .eq(InterviewAnswer::getQuestionIndex, qIndex));
+                                .eq(InterviewAnswer::getQuestionIndex, qIndex)
+                                .orderByDesc(InterviewAnswer::getId)
+                                .last("LIMIT 1"));
 
                 if (answer != null) {
-                    answer.setScore((int) score);
+                    answer.setScore(Math.clamp((int) score, 0, 100));
                     answer.setFeedback(feedback);
                     answer.setEvaluatedAt(LocalDateTime.now());
                     answerMapper.updateById(answer);
                 }
             }
-        }
+        });
     }
 
     /**
      * 生成白卷评估报告（零分）
      */
-    private void generateEmptyEvaluation(InterviewSession session, List<InterviewQuestion> questions) {
+    private void generateEmptyEvaluation(InterviewSession session) {
         try {
             session.setOverallScore(0);
             session.setOverallFeedback("候选人未回答任何问题，无法进行有效评估。建议认真准备面试，积极回答问题以展示自己的能力。");
@@ -394,19 +410,6 @@ public class EvaluateStreamConsumer extends AbstractStreamConsumer<String> {
             );
             session.setImprovementsJson(MAPPER.writeValueAsString(improvements));
             sessionMapper.updateById(session);
-
-            // 为所有问题创建零分答案记录
-            for (InterviewQuestion question : questions) {
-                InterviewAnswer answer = new InterviewAnswer();
-                answer.setSessionId(session.getSessionId());
-                answer.setQuestionIndex(question.getQuestionIndex());
-                answer.setAnswer("");
-                answer.setScore(0);
-                answer.setFeedback("未作答");
-                answer.setCreatedAt(LocalDateTime.now());
-                answer.setEvaluatedAt(LocalDateTime.now());
-                answerMapper.insert(answer);
-            }
 
             log.info("✅ 白卷评估报告生成完成, sessionId: {}, 总分: 0", session.getSessionId());
         } catch (Exception e) {

@@ -8,6 +8,8 @@ import com.edu.muc.app.modules.knowledgebase.mapper.KnowledgeDocumentMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 
@@ -35,6 +37,7 @@ public class VectorizeStreamProducer extends AbstractStreamProducer<Long> {
      *
      * @return 是否入队成功
      */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public boolean send(Long kbId) {
         return sendTask(kbId);
     }
@@ -64,6 +67,7 @@ public class VectorizeStreamProducer extends AbstractStreamProducer<Long> {
         try {
             documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
                     .eq(KnowledgeDocument::getId, kbId)
+                    .eq(KnowledgeDocument::getVectorStatus, "PENDING")
                     .set(KnowledgeDocument::getVectorStatus, "FAILED")
                     .set(KnowledgeDocument::getVectorError, error));
             log.warn("文档向量化任务入队失败，已标记为 FAILED: kbId={}", kbId);

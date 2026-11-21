@@ -138,7 +138,10 @@ public class RagChatController {
         // 输入校验：移除控制字符（防止注入）
         String sanitized = question.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]", "");
 
-        log.info("🔍 开始 RAG 流式问答，会话ID: {}, 问题: {}", sessionId, sanitized);
+        if (sanitized.isBlank()) {
+            throw new BusinessException("VALIDATION_ERROR", "提问内容不能为空");
+        }
+        log.info("开始 RAG 流式问答，会话 ID: {}", sessionId);
         return ragChatService.sendMessageStream(sessionId, sanitized);
     }
 }

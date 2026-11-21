@@ -4,7 +4,7 @@ import com.edu.muc.app.modules.resume.domain.Resumes;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Select;
 
-import java.util.List;
+import org.apache.ibatis.annotations.Param;
 
 /**
 * @author LINJH
@@ -13,6 +13,8 @@ import java.util.List;
 * @Entity generator.domain.Resumes
 */
 public interface ResumesMapper extends BaseMapper<Resumes> {
+    @Select("SELECT true FROM pg_advisory_xact_lock(hashtextextended('resume:' || #{hash}, 0))")
+    boolean lockFileHash(@Param("hash") String hash);
 }
 
 

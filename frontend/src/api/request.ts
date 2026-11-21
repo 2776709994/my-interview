@@ -9,14 +9,8 @@ interface Result<T = unknown> {
   data: T;
 }
 
-// 开发环境：使用当前页面的主机地址（支持局域网访问）
-// 生产环境：使用相对路径（通过 Nginx 代理）
-const baseURL = import.meta.env.PROD 
-  ? '' 
-  : `${window.location.protocol}//${window.location.hostname}:8080`;
-
+// 开发与生产均通过同源反向代理访问后端。
 const instance: AxiosInstance = axios.create({
-  baseURL,
   timeout: 60000,
 });
 

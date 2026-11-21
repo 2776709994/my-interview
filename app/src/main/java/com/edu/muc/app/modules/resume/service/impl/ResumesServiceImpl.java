@@ -1,6 +1,7 @@
 package com.edu.muc.app.modules.resume.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
@@ -61,6 +62,9 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     public Resumes upload(MultipartFile file) throws Exception {
         String storageKey = null;
         try {
+            if (file.isEmpty()) {
+                throw new BusinessException("FILE_EMPTY", "简历文件不能为空");
+            }
             // 0. 文件大小校验（防止超大文件打爆 MinIO 与 Tika 解析）
             if (file.getSize() > 10 * 1024 * 1024L) {
                 throw new BusinessException("FILE_TOO_LARGE", "文件大小超过限制（最大10MB）");
@@ -68,32 +72,23 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
 
             // 1. 计算文件的 SHA-256 哈希值（内容寻址去重）
             String hash = fileHashService.calculateHash(file);
+            resumesMapper.lockFileHash(hash);
 
             // 2. 检查数据库中是否已有相同哈希的简历（即内容相同的文件）
             Resumes existing = resumesMapper.selectOne(
-                    new LambdaQueryWrapper<Resumes>().eq(Resumes::getFileHash, hash));
+                    new LambdaQueryWrapper<Resumes>()
+                            .eq(Resumes::getFileHash, hash)
+                            .orderByDesc(Resumes::getId)
+                            .last("LIMIT 1 FOR UPDATE"));
 
             if (existing != null) {
-                // 正在分析中：不重复入队（状态守卫放行 PROCESSING 会导致并发双跑、重复消耗 AI 调用），
-                // 直接返回旧记录，等待在途任务完成
-                if (AsyncTaskStatus.PROCESSING.name().equals(existing.getAnalyzeStatus())) {
-                    log.info("⏳ 简历正在分析中，跳过重复触发: resumeId={}", existing.getId());
-                    return existing;
+                existing.setDuplicate(true);
+                String status = existing.getAnalyzeStatus();
+                if (status == null || AsyncTaskStatus.FAILED.name().equals(status)) {
+                    scheduleAnalysis(existing.getId());
+                    existing.setAnalyzeStatus(AsyncTaskStatus.PENDING.name());
+                    existing.setAnalyzeError(null);
                 }
-                // 已存在：重置状态后重新触发一次 AI 分析，然后返回旧记录
-                // （消费端状态守卫仅放行 PENDING/PROCESSING，需先回到 PENDING）
-                existing.setAnalyzeStatus(AsyncTaskStatus.PENDING.name());
-                existing.setAnalyzeError(null);
-                resumesMapper.updateById(existing);
-                // 必须事务提交后再入队：XADD 立即可见，若在提交前投递，消费者会读到
-                // 未提交前的旧 COMPLETED 状态而 shouldSkip 跳过并 ACK，任务永久丢失
-                final Long existingId = existing.getId();
-                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                    @Override
-                    public void afterCommit() {
-                        streamProducer.send(existingId);
-                    }
-                });
                 return existing;
             }
 
@@ -144,8 +139,11 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
     }
 
     @Override
+    @Transactional
     public void reanalyze(Long id) {
-        Resumes resume = resumesMapper.selectById(id);
+        Resumes resume = resumesMapper.selectOne(new LambdaQueryWrapper<Resumes>()
+                .eq(Resumes::getId, id)
+                .last("FOR UPDATE"));
         if (resume == null) {
             throw new BusinessException("RESUME_NOT_FOUND", "简历不存在");
         }
@@ -153,12 +151,20 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
         if (AsyncTaskStatus.PROCESSING.name().equals(resume.getAnalyzeStatus())) {
             throw new BusinessException("ANALYSIS_IN_PROGRESS", "简历正在分析中，请稍后重试");
         }
-        // 消费端状态守卫仅放行 PENDING/PROCESSING，
-        // 已完成/失败的简历必须先重置回 PENDING 才能被重新领取
-        resume.setAnalyzeStatus(AsyncTaskStatus.PENDING.name());
-        resume.setAnalyzeError(null);
-        resumesMapper.updateById(resume);
-        streamProducer.send(id);
+        scheduleAnalysis(id);
+    }
+
+    private void scheduleAnalysis(Long id) {
+        resumesMapper.update(null, new LambdaUpdateWrapper<Resumes>()
+                .eq(Resumes::getId, id)
+                .set(Resumes::getAnalyzeStatus, AsyncTaskStatus.PENDING.name())
+                .set(Resumes::getAnalyzeError, null));
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                streamProducer.send(id);
+            }
+        });
     }
 
     @Override
@@ -199,16 +205,18 @@ public class ResumesServiceImpl extends ServiceImpl<ResumesMapper, Resumes>
 
     @Override
     public IPage<ResumeListItemDTO> getListWithPagination(int page, int size) {
-        Page<Resumes> resumePage = resumesMapper.selectPage(
-                new Page<>(page, size),
-                new LambdaQueryWrapper<Resumes>()
-                        .orderByDesc(Resumes::getUploadedAt)
-        );
-
-        List<ResumeListItemDTO> dtoList = buildDtoList(resumePage.getRecords());
-
-        Page<ResumeListItemDTO> result = new Page<>(resumePage.getCurrent(), resumePage.getSize(), resumePage.getTotal());
-        result.setRecords(dtoList);
+        if (page < 1 || size < 1 || size > 100) {
+            throw new BusinessException("INVALID_PAGE", "页码须从 1 开始，每页最多 100 条");
+        }
+        long total = resumesMapper.selectCount(null);
+        long offset = (long) (page - 1) * size;
+        Page<ResumeListItemDTO> result = new Page<>(page, size, total);
+        if (offset < total) {
+            List<Resumes> records = resumesMapper.selectList(new LambdaQueryWrapper<Resumes>()
+                    .orderByDesc(Resumes::getUploadedAt, Resumes::getId)
+                    .last("LIMIT " + size + " OFFSET " + offset));
+            result.setRecords(buildDtoList(records));
+        }
         return result;
     }
 

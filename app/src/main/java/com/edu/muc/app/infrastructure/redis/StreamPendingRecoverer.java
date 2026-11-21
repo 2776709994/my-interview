@@ -12,15 +12,15 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Redis Stream PEL（Pending Entries List）恢复工具。
  * <p>
  * 消费者异常退出/处理失败后，消息会滞留在 PEL 中且不会被重新投递（XREADGROUP
- * 的 lastConsumed 只返回新消息）。本工具将 idle 超过 {@link #MIN_IDLE} 且
- * 投递次数未超限的消息 claim 到当前消费者并返回，由调用方（消费者模板）按统一的
- * 重试语义重新处理；投递次数超过 {@link #MAX_DELIVERY} 的消息直接 ACK 放弃
- * （等效死信），避免无限重试。
+ * 的 lastConsumed 只返回新消息）。本工具分页认领 idle 超过 {@link #MIN_IDLE} 的消息，
+ * 由消费者按业务重试次数处理，直到业务状态写入成功。
  * </p>
  */
 @Slf4j
@@ -32,11 +32,10 @@ public class StreamPendingRecoverer {
     /** 消息 idle 超过该时长视为"处理中挂起"，可被认领（需大于单任务最长处理时间） */
     private static final Duration MIN_IDLE = Duration.ofMinutes(5);
 
-    /** 最大投递次数，超过则放弃（ACK） */
-    private static final int MAX_DELIVERY = 3;
 
     /** 每次最多扫描的 PEL 消息数 */
     private static final int SCAN_LIMIT = 100;
+    private final Map<String, String> scanOffsets = new ConcurrentHashMap<>();
 
     public StreamPendingRecoverer(RedisTemplate<String, Object> redisTemplate) {
         this.redisTemplate = redisTemplate;
@@ -52,32 +51,31 @@ public class StreamPendingRecoverer {
      */
     public List<MapRecord<String, Object, Object>> recover(String streamKey, String group, String consumerName) {
         try {
+            String scanKey = streamKey + ":" + group;
+            String offset = scanOffsets.get(scanKey);
+            Range<String> range = offset == null ? Range.unbounded()
+                    : Range.from(Range.Bound.exclusive(offset)).to(Range.Bound.unbounded());
             PendingMessages pending = redisTemplate.opsForStream()
-                    .pending(streamKey, group, Range.unbounded(), SCAN_LIMIT);
+                    .pending(streamKey, group, range, SCAN_LIMIT);
             if (pending == null || pending.isEmpty()) {
+                scanOffsets.remove(scanKey);
                 return List.of();
             }
 
             List<RecordId> toClaim = new ArrayList<>();
-            List<RecordId> toDiscard = new ArrayList<>();
+            RecordId lastId = null;
             for (PendingMessage msg : pending) {
+                lastId = msg.getId();
                 long idleSeconds = msg.getElapsedTimeSinceLastDelivery() != null
                         ? msg.getElapsedTimeSinceLastDelivery().getSeconds() : 0;
-                long deliveryCount = msg.getTotalDeliveryCount();
-                if (idleSeconds < MIN_IDLE.toSeconds()) {
-                    continue;
-                }
-                if (deliveryCount >= MAX_DELIVERY) {
-                    toDiscard.add(msg.getId());
-                } else {
+                if (idleSeconds >= MIN_IDLE.toSeconds()) {
                     toClaim.add(msg.getId());
                 }
             }
-
-            if (!toDiscard.isEmpty()) {
-                log.warn("[{}] {} 条消息投递超过 {} 次仍未成功，放弃并 ACK（消息ID: {}）",
-                        streamKey, toDiscard.size(), MAX_DELIVERY, toDiscard);
-                redisTemplate.opsForStream().acknowledge(streamKey, group, toDiscard.toArray(new RecordId[0]));
+            if (pending.size() == SCAN_LIMIT && lastId != null) {
+                scanOffsets.put(scanKey, lastId.getValue());
+            } else {
+                scanOffsets.remove(scanKey);
             }
 
             if (toClaim.isEmpty()) {
@@ -87,7 +85,7 @@ public class StreamPendingRecoverer {
             log.info("[{}] 认领 {} 条超时未确认消息，重新处理", streamKey, toClaim.size());
             List<MapRecord<String, Object, Object>> claimed = redisTemplate.opsForStream()
                     .claim(streamKey, group, consumerName, MIN_IDLE, toClaim.toArray(new RecordId[0]));
-            // 消息体可能已被 XTRIM 裁剪（PEL 残留空消息），直接 ACK 清理
+            // 清理旧版本裁剪后遗留的空消息。
             List<MapRecord<String, Object, Object>> valid = new ArrayList<>(claimed.size());
             for (MapRecord<String, Object, Object> record : claimed) {
                 if (record.getValue() == null || record.getValue().isEmpty()) {

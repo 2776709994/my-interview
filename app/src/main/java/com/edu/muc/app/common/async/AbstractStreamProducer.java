@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * Redis Stream 生产者模板基类。
  * <p>
- * 模板方法统一"构建消息 → XADD 入队（接口入队即返回，不等待消费结果）→ XTRIM 裁剪 →
+ * 模板方法统一"构建消息 → XADD 入队（接口入队即返回，不等待消费结果）→
  * 失败兜底"骨架，子类只需提供 Stream Key、消息字段与入队失败的处理逻辑。
  * 每条消息默认携带 {@code retryCount=0}，与 {@link AbstractStreamConsumer} 配合实现失败自动重试。
  * </p>
@@ -39,7 +39,9 @@ public abstract class AbstractStreamProducer<T> {
             message.putIfAbsent(AsyncTaskStreamConstants.FIELD_RETRY_COUNT, "0");
             RecordId messageId = redisTemplate.opsForStream().add(
                     StreamRecords.newRecord().in(streamKey()).ofMap(message));
-            trimStream();
+            if (messageId == null) {
+                throw new IllegalStateException("Redis 未返回消息 ID");
+            }
             log.info("{}任务已入队: payload={}, messageId={}",
                     taskDisplayName(), payloadIdentifier(payload), messageId);
             return true;
@@ -48,17 +50,6 @@ public abstract class AbstractStreamProducer<T> {
                     taskDisplayName(), payloadIdentifier(payload), e.getMessage(), e);
             onSendFailed(payload, truncateError("任务入队失败: " + e.getMessage()));
             return false;
-        }
-    }
-
-    /**
-     * 按常量上限裁剪 Stream，防止无限增长；裁剪失败只记录日志，不影响消息写入
-     */
-    private void trimStream() {
-        try {
-            redisTemplate.opsForStream().trim(streamKey(), AsyncTaskStreamConstants.STREAM_MAX_LEN);
-        } catch (Exception e) {
-            log.warn("裁剪 Redis Stream 失败（key={}）: {}", streamKey(), e.getMessage());
         }
     }
 

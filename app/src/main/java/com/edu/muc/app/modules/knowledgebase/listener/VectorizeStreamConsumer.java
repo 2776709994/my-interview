@@ -99,7 +99,7 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<Long> {
     @Override
     protected boolean shouldSkip(Long kbId) {
         KnowledgeDocument doc = documentMapper.selectById(kbId);
-        return doc != null && "COMPLETED".equals(doc.getVectorStatus());
+        return doc == null || doc.getParentId() != null || "COMPLETED".equals(doc.getVectorStatus());
     }
 
     @Override
@@ -119,12 +119,7 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<Long> {
 
     @Override
     protected void markCompleted(Long kbId) {
-        documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
-                .eq(KnowledgeDocument::getId, kbId)
-                .set(KnowledgeDocument::getVectorStatus, "COMPLETED")
-                .set(KnowledgeDocument::getVectorError, null)
-                .set(KnowledgeDocument::getProcessedAt, LocalDateTime.now()));
-        log.info("🎉 文档向量化完成: kbId={}", kbId);
+        // 父文档状态与分块在同一个事务中提交。
     }
 
     @Override
@@ -132,6 +127,7 @@ public class VectorizeStreamConsumer extends AbstractStreamConsumer<Long> {
         log.error("❌ 文档向量化最终失败: kbId={}, 原因: {}", kbId, error);
         documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
                 .eq(KnowledgeDocument::getId, kbId)
+                .eq(KnowledgeDocument::getVectorStatus, "PROCESSING")
                 .set(KnowledgeDocument::getVectorStatus, "FAILED")
                 .set(KnowledgeDocument::getVectorError, error));
     }

@@ -3,6 +3,7 @@ package com.edu.muc.app.modules.knowledgebase.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.edu.muc.app.common.JsonUtils;
+import com.edu.muc.app.common.ai.SseTextStream;
 import com.edu.muc.app.infrastructure.file.DocumentParseService;
 import com.edu.muc.app.infrastructure.file.FileHashService;
 import com.edu.muc.app.modules.knowledgebase.listener.VectorizeStreamProducer;
@@ -22,17 +23,15 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 /**
@@ -52,6 +51,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     private final SmartRetrievalService smartRetrievalService;
     private final EmbeddingCacheService embeddingCacheService;
     private final VectorizeStreamProducer vectorizeStreamProducer;
+    private final TransactionTemplate transactionTemplate;
 
     public KnowledgeDocumentServiceImpl(KnowledgeDocumentMapper documentMapper,
                                         FileStorageService fileStorageService,
@@ -63,7 +63,8 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                                         ExecutorService executorService,
                                         SmartRetrievalService smartRetrievalService,
                                         EmbeddingCacheService embeddingCacheService,
-                                        VectorizeStreamProducer vectorizeStreamProducer) {
+                                        VectorizeStreamProducer vectorizeStreamProducer,
+                                        TransactionTemplate transactionTemplate) {
         this.documentMapper = documentMapper;
         this.fileStorageService = fileStorageService;
         this.embeddingModel = embeddingModel;
@@ -74,6 +75,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         this.smartRetrievalService = smartRetrievalService;
         this.embeddingCacheService = embeddingCacheService;
         this.vectorizeStreamProducer = vectorizeStreamProducer;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Override
@@ -83,6 +85,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         try {
             // 1. 计算 SHA-256 查重（内容寻址，抗碰撞性优于 MD5）
             String hash = fileHashService.calculateHash(file);
+            documentMapper.lockFileHash(hash);
             log.info("🔍 文件 SHA-256: {}", hash);
 
             // 1.1 查重：内容相同的文件直接返回已有父文档记录，不再重复解析与向量化
@@ -105,6 +108,9 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
             // 3. 使用专业文档解析（PDF 禁用图片提取/按坐标排序、DOCX 禁用嵌入资源、正则清洗噪声）
             String content = documentParseService.parseContent(file);
+            if (content.isBlank()) {
+                throw new BusinessException("DOCUMENT_EMPTY", "文档没有可提取的文本");
+            }
             log.info("✅ 文件解析成功，内容长度: {}", content.length());
 
             // 5. 创建父文档记录（存储完整内容和元数据）
@@ -224,19 +230,13 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     @Override
     @Transactional
     public boolean delete(Long id) {
-        KnowledgeDocument document = documentMapper.selectById(id);
+        KnowledgeDocument document = lockParent(id);
         if (document == null) {
             return false;
         }
 
-        // 如果是父文档，先删除所有子文档（分块）
-        if (document.getParentId() == null) {
-            documentMapper.delete(
-                    new LambdaQueryWrapper<KnowledgeDocument>()
-                            .eq(KnowledgeDocument::getParentId, id)
-            );
-            log.info("✅ 已删除 {} 个子文档（分块）", document.getChunkCount());
-        }
+        documentMapper.delete(new LambdaQueryWrapper<KnowledgeDocument>()
+                .eq(KnowledgeDocument::getParentId, id));
 
         // 删除数据库记录
         documentMapper.deleteById(id);
@@ -295,84 +295,56 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
 
     @Override
     public SseEmitter queryStream(List<Long> knowledgeBaseIds, String question) {
-        SseEmitter emitter = new SseEmitter(180000L); // 3分钟超时
-        
-        CompletableFuture.runAsync(() -> {
-            try {
-                // 1. 将问题向量化（高频问题走 Redis 缓存，命中跳过 embedding 调用）
-                float[] qEmbedding = embeddingCacheService.embedCached(embeddingModel, question);
-                String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
-                
-                // 2. 智能检索相关文档片段（双路检索：向量 + 关键词 + Rerank，按请求指定的知识库 ID 过滤，空列表表示检索全部）
-                List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(question, qJson, knowledgeBaseIds);
-                
-                // 3. 构建上下文（使用 chunk 的内容）
-                String context = docs.stream()
-                        .map(doc -> {
-                            // 标注来源：文档名 + 片段编号
-                            String source = doc.getName();
-                            return String.format("【%s】\n%s", source, doc.getContent());
-                        })
-                        .collect(Collectors.joining("\n\n"));
-                
-                log.info("🔍 RAG 检索到 {} 个相关文档片段", docs.size());
-                
-                // 4. 构建 Prompt
-                String sysPrompt = "你是一个专业的知识库助手。请根据提供的上下文信息回答问题。如果上下文中没有相关信息，请诚实地告诉用户。回答时尽量引用具体的文档来源。";
-                String userPrompt = String.format("问题：%s\n\n上下文：\n%s", question, context);
+        SseTextStream stream = new SseTextStream();
+        return stream.start(executorService, () -> {
+            // 1. 将问题向量化（高频问题走 Redis 缓存，命中跳过 embedding 调用）
+            float[] qEmbedding = embeddingCacheService.embedCached(embeddingModel, question);
+            String qJson = JsonUtils.convertEmbeddingToJson(qEmbedding);
 
-                // 5. 流式调用 AI
-                final AtomicReference<org.reactivestreams.Subscription> subRef = new AtomicReference<>();
-                chatClient.prompt()
-                        .system(sysPrompt)
-                        .user(userPrompt)
-                        .stream()
-                        .content()
-                        .doOnNext(chunk -> {
-                            try {
-                                emitter.send(chunk);
-                            } catch (IOException e) {
-                                log.error("❌ SSE 发送失败，关闭连接", e);
-                                emitter.completeWithError(e);
-                                org.reactivestreams.Subscription sub = subRef.get();
-                                if (sub != null) sub.cancel();
-                                throw new RuntimeException(e);
-                            }
-                        })
-                        .doOnComplete(() -> {
-                            // 更新父文档的提问次数和访问次数
-                            if (!knowledgeBaseIds.isEmpty()) {
-                                // 通过子文档的 parentId 找到父文档并更新统计
-                                List<Long> parentIds = docs.stream()
-                                        .map(KnowledgeDocument::getParentId)
-                                        .filter(id -> id != null)
-                                        .distinct()
-                                        .toList();
+            // 2. 智能检索相关文档片段（双路检索：向量 + 关键词 + Rerank，按请求指定的知识库 ID 过滤，空列表表示检索全部）
+            List<KnowledgeDocument> docs = smartRetrievalService.smartRetrieve(question, qJson, knowledgeBaseIds);
 
-                                if (!parentIds.isEmpty()) {
-                                    documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
-                                            .setSql("question_count = question_count + 1")
-                                            .in(KnowledgeDocument::getId, parentIds));
-                                    documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
-                                            .setSql("access_count = access_count + 1")
-                                            .in(KnowledgeDocument::getId, parentIds));
-                                }
+            // 3. 构建上下文（使用 chunk 的内容）
+            String context = docs.stream()
+                    .map(doc -> {
+                        // 标注来源：文档名 + 片段编号
+                        String source = doc.getName();
+                        return String.format("【%s】\n%s", source, doc.getContent());
+                    })
+                    .collect(Collectors.joining("\n\n"));
+
+            log.info("🔍 RAG 检索到 {} 个相关文档片段", docs.size());
+
+            // 4. 构建 Prompt
+            String sysPrompt = "你是一个专业的知识库助手。请根据提供的上下文信息回答问题。如果上下文中没有相关信息，请诚实地告诉用户。回答时尽量引用具体的文档来源。";
+            String userPrompt = String.format("问题：%s\n\n上下文：\n%s", question, context);
+
+            // 5. 流式调用 AI
+            stream.send(chatClient.prompt()
+                    .system(sysPrompt)
+                    .user(userPrompt)
+                    .stream()
+                    .content(), () -> {
+                        // 更新父文档的提问次数和访问次数
+                        if (!knowledgeBaseIds.isEmpty()) {
+                            // 通过子文档的 parentId 找到父文档并更新统计
+                            List<Long> parentIds = docs.stream()
+                                    .map(KnowledgeDocument::getParentId)
+                                    .filter(id -> id != null)
+                                    .distinct()
+                                    .toList();
+
+                            if (!parentIds.isEmpty()) {
+                                documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                                        .setSql("question_count = question_count + 1")
+                                        .in(KnowledgeDocument::getId, parentIds));
+                                documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                                        .setSql("access_count = access_count + 1")
+                                        .in(KnowledgeDocument::getId, parentIds));
                             }
-                            emitter.complete();
-                        })
-                        .doOnError(err -> {
-                            log.error("❌ SSE 查询失败", err);
-                            emitter.completeWithError(err);
-                        })
-                        .subscribe();
-                        
-            } catch (Exception e) {
-                log.error("❌ SSE 查询异常", e);
-                emitter.completeWithError(e);
-            }
-        }, executorService);
-        
-        return emitter;
+                        }
+                    });
+        });
     }
 
     /**
@@ -401,6 +373,7 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
         log.info("✅ 文本已分块，共 {} 块: kbId={}", chunks.size(), parentId);
 
         // 为每个 chunk 创建子文档并生成向量（Embedding 调用为 IO 密集型，运行在虚拟线程）
+        List<KnowledgeDocument> chunkDocuments = new ArrayList<>(chunks.size());
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
 
@@ -426,12 +399,30 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             chunkDoc.setParentId(parentId);
             chunkDoc.setChunkIndex(i);
 
-            documentMapper.insertVectorDocument(chunkDoc);
+            chunkDocuments.add(chunkDoc);
         }
 
-        // 更新父文档分块数（终态 COMPLETED 由消费者 markCompleted 统一落库）
-        document.setChunkCount(chunks.size());
-        documentMapper.updateById(document);
+        if (chunkDocuments.isEmpty()) {
+            throw new IllegalStateException("未能从文档中提取任何分块");
+        }
+        transactionTemplate.executeWithoutResult(ignored -> {
+            KnowledgeDocument parent = lockParent(parentId);
+            if (parent == null || !"PROCESSING".equals(parent.getVectorStatus())) {
+                return;
+            }
+            documentMapper.delete(new LambdaQueryWrapper<KnowledgeDocument>()
+                    .eq(KnowledgeDocument::getParentId, parentId));
+            for (KnowledgeDocument chunk : chunkDocuments) {
+                chunk.setCategory(parent.getCategory());
+                documentMapper.insertVectorDocument(chunk);
+            }
+            documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                    .eq(KnowledgeDocument::getId, parentId)
+                    .set(KnowledgeDocument::getChunkCount, chunkDocuments.size())
+                    .set(KnowledgeDocument::getVectorStatus, "COMPLETED")
+                    .set(KnowledgeDocument::getVectorError, null)
+                    .set(KnowledgeDocument::getProcessedAt, LocalDateTime.now()));
+        });
         log.info("✅ 文档向量化处理完成，共 {} 个分块: kbId={}", chunks.size(), parentId);
     }
 
@@ -491,6 +482,9 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
             if (!chunk.isEmpty()) {
                 chunks.add(chunk);
             }
+            if (end == text.length()) {
+                break;
+            }
             
             // 下一块的起始位置（减去重叠部分）
             int nextStart = end - overlapSize;
@@ -536,29 +530,21 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
     @Override
     @Transactional
     public void revectorize(Long id) {
-        KnowledgeDocument document = documentMapper.selectById(id);
+        KnowledgeDocument document = lockParent(id);
         if (document == null) {
             throw new BusinessException("DOCUMENT_NOT_FOUND", "文档不存在");
         }
         
-        // 只有父文档才能重新向量化
-        if (document.getParentId() != null) {
-            throw new BusinessException("INVALID_OPERATION", "只能对父文档进行重新向量化");
+        if ("PROCESSING".equals(document.getVectorStatus())) {
+            throw new BusinessException("VECTORIZATION_IN_PROGRESS", "文档正在向量化，请稍后重试");
         }
         
         log.info("🔄 开始重新向量化文档: {}", id);
 
-        // 1. 删除旧的子文档（分块）
-        documentMapper.delete(
-                new LambdaQueryWrapper<KnowledgeDocument>()
-                        .eq(KnowledgeDocument::getParentId, id)
-        );
-        log.info("✅ 已删除旧的分块");
-
-        // 2. 重置父文档状态为 PENDING（消费端状态守卫要求）
-        document.setVectorStatus("PENDING");
-        document.setVectorError(null);
-        documentMapper.updateById(document);
+        documentMapper.update(null, new LambdaUpdateWrapper<KnowledgeDocument>()
+                .eq(KnowledgeDocument::getId, id)
+                .set(KnowledgeDocument::getVectorStatus, "PENDING")
+                .set(KnowledgeDocument::getVectorError, null));
 
         // 3. 事务提交后经 Redis Stream 异步向量化（自动重试 3 次，前端轮询 vectorStatus）
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -569,5 +555,12 @@ public class KnowledgeDocumentServiceImpl implements KnowledgeDocumentService {
                 }
             }
         });
+    }
+
+    private KnowledgeDocument lockParent(Long id) {
+        return documentMapper.selectOne(new LambdaQueryWrapper<KnowledgeDocument>()
+                .eq(KnowledgeDocument::getId, id)
+                .isNull(KnowledgeDocument::getParentId)
+                .last("FOR UPDATE"));
     }
 }

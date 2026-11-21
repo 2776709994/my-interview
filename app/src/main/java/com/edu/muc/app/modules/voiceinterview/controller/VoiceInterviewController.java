@@ -179,17 +179,8 @@ public class VoiceInterviewController {
                     .build());
         }
 
-        if (status == AsyncTaskStatus.PENDING || status == AsyncTaskStatus.PROCESSING) {
-            return Result.success(VoiceEvaluationStatusDTO.builder()
-                    .evaluateStatus(status.name())
-                    .build());
-        }
-
         voiceInterviewService.triggerEvaluation(sessionId);
-
-        return Result.success(VoiceEvaluationStatusDTO.builder()
-                .evaluateStatus(AsyncTaskStatus.PENDING.name())
-                .build());
+        return getEvaluation(sessionId);
     }
 
     private AsyncTaskStatus parseStatus(String evaluateStatus) {

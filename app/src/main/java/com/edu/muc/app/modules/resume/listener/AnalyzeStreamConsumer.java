@@ -25,13 +25,14 @@ import org.springframework.core.io.DefaultResourceLoader;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -52,6 +53,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
     private final DocumentParseService documentParseService;
     private final StructuredOutputInvoker structuredOutputInvoker;
     private final ExecutorService analysisExecutor;
+    private final TransactionTemplate transactionTemplate;
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -67,6 +69,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
                                  ChatClient chatClient,
                                  DocumentParseService documentParseService,
                                  StructuredOutputInvoker structuredOutputInvoker,
+                                 TransactionTemplate transactionTemplate,
                                  @Qualifier("resumeAnalysisExecutor") ExecutorService analysisExecutor) {
         super(redisTemplate, pendingRecoverer);
         this.resumesMapper = resumesMapper;
@@ -75,6 +78,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         this.chatClient = chatClient;
         this.documentParseService = documentParseService;
         this.structuredOutputInvoker = structuredOutputInvoker;
+        this.transactionTemplate = transactionTemplate;
         this.analysisExecutor = analysisExecutor;
     }
 
@@ -127,7 +131,7 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
     @Override
     protected boolean shouldSkip(Long resumeId) {
         Resumes resume = resumesMapper.selectById(resumeId);
-        return resume != null && AsyncTaskStatus.COMPLETED.name().equals(resume.getAnalyzeStatus());
+        return resume == null || AsyncTaskStatus.COMPLETED.name().equals(resume.getAnalyzeStatus());
     }
 
     @Override
@@ -154,21 +158,6 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         // 1. 提取文本（缺失时从 MinIO 下载并解析；失败抛异常走自动重试）
         String text = ensureResumeText(resume);
 
-        // 2. 获取分析记录（简历允许多次分析产生多条记录，取最近一条复用，避免重复插入；
-        //    直接 selectOne 在多条历史记录下会抛 TooManyResultsException）
-        ResumeAnalyses analysis = analysesMapper.selectOne(
-                new LambdaQueryWrapper<ResumeAnalyses>()
-                        .eq(ResumeAnalyses::getResumeId, resumeId)
-                        .orderByDesc(ResumeAnalyses::getAnalyzedAt)
-                        .last("LIMIT 1"));
-        if (analysis == null) {
-            analysis = new ResumeAnalyses();
-            analysis.setResumeId(resumeId);
-            analysis.setAnalyzedAt(LocalDateTime.now());
-            analysesMapper.insert(analysis);
-            log.info("📋 创建分析记录: id={}", analysis.getId());
-        }
-
         // 3. 加载提示词模板（动态注入当前时间，解决大模型时间幻觉问题）
         PromptTemplate systemTemplate = new PromptTemplate(
                 new DefaultResourceLoader().getResource("classpath:prompts/resume-analysis-system.st"));
@@ -190,47 +179,60 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
                 ErrorCode.RESUME_ANALYSIS_FAILED, "简历分析结构化输出失败: ", "resume-analysis", log);
         log.info("✅ AI 结构化分析完成: overallScore={}", response.overallScore());
 
-        // 5. 保存五维评分与改进建议
-        analysis.setOverallScore(response.overallScore());
         ResumeAnalysisResponse.ScoreDetail detail = response.scoreDetail();
-        if (detail != null) {
+        if (detail == null) {
+            throw new IllegalStateException("简历分析缺少五维评分");
+        }
+        String strengths = MAPPER.writeValueAsString(response.strengths() != null ? response.strengths() : List.of());
+        String suggestions = MAPPER.writeValueAsString(response.suggestions() != null ? response.suggestions() : List.of());
+        transactionTemplate.executeWithoutResult(ignored -> {
+            Resumes current = resumesMapper.selectOne(new LambdaQueryWrapper<Resumes>()
+                    .eq(Resumes::getId, resumeId)
+                    .last("FOR UPDATE"));
+            if (current == null || !AsyncTaskStatus.PROCESSING.name().equals(current.getAnalyzeStatus())) {
+                return;
+            }
+            ResumeAnalyses analysis = analysesMapper.selectOne(new LambdaQueryWrapper<ResumeAnalyses>()
+                    .eq(ResumeAnalyses::getResumeId, resumeId)
+                    .orderByDesc(ResumeAnalyses::getAnalyzedAt, ResumeAnalyses::getId)
+                    .last("LIMIT 1"));
+            if (analysis == null) {
+                analysis = new ResumeAnalyses();
+                analysis.setResumeId(resumeId);
+            }
+            analysis.setOverallScore(detail.total());
             analysis.setProjectScore(detail.projectScore());
             analysis.setSkillMatchScore(detail.skillMatchScore());
             analysis.setContentScore(detail.contentScore());
             analysis.setStructureScore(detail.structureScore());
             analysis.setExpressionScore(detail.expressionScore());
-        }
-        analysis.setSummary(response.summary());
-        analysis.setStrengthsJson(MAPPER.writeValueAsString(
-                response.strengths() != null ? response.strengths() : List.of()));
-        analysis.setSuggestionsJson(MAPPER.writeValueAsString(
-                response.suggestions() != null ? response.suggestions() : List.of()));
-        analysis.setAnalyzedAt(LocalDateTime.now());
-        analysesMapper.updateById(analysis);
-        log.info("💾 分析结果已保存，简历ID: {}, 总分: {}", resumeId, response.overallScore());
+            analysis.setSummary(response.summary());
+            analysis.setStrengthsJson(strengths);
+            analysis.setSuggestionsJson(suggestions);
+            analysis.setAnalyzedAt(LocalDateTime.now());
+            analysesMapper.insertOrUpdate(analysis);
+            resumesMapper.update(null, new LambdaUpdateWrapper<Resumes>()
+                    .eq(Resumes::getId, resumeId)
+                    .set(Resumes::getAnalyzeStatus, AsyncTaskStatus.COMPLETED.name())
+                    .set(Resumes::getAnalyzeError, null)
+                    .setSql("access_count = COALESCE(access_count, 0) + 1")
+                    .set(Resumes::getLastAccessedAt, new Date()));
+        });
     }
 
     @Override
     protected void markCompleted(Long resumeId) {
-        Resumes resume = resumesMapper.selectById(resumeId);
-        if (resume != null) {
-            resume.setAnalyzeStatus(AsyncTaskStatus.COMPLETED.name());
-            resume.setAccessCount((resume.getAccessCount() != null ? resume.getAccessCount() : 0) + 1);
-            resume.setLastAccessedAt(new Date());
-            resumesMapper.updateById(resume);
-            log.info("🎉 简历分析完成！简历ID: {}", resumeId);
-        }
+        // 评分与完成状态在同一个事务中提交。
     }
 
     @Override
     protected void markFailed(Long resumeId, String error) {
         log.error("❌ 简历分析最终失败，简历ID: {}, 原因: {}", resumeId, error);
-        Resumes resume = resumesMapper.selectById(resumeId);
-        if (resume != null) {
-            resume.setAnalyzeStatus(AsyncTaskStatus.FAILED.name());
-            resume.setAnalyzeError(error);
-            resumesMapper.updateById(resume);
-        }
+        resumesMapper.update(null, new LambdaUpdateWrapper<Resumes>()
+                .eq(Resumes::getId, resumeId)
+                .eq(Resumes::getAnalyzeStatus, AsyncTaskStatus.PROCESSING.name())
+                .set(Resumes::getAnalyzeStatus, AsyncTaskStatus.FAILED.name())
+                .set(Resumes::getAnalyzeError, error));
     }
 
     /**
@@ -249,11 +251,10 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         byte[] fileBytes = fileStorageService.downloadAsBytes(resume.getStorageKey());
         log.info("✅ 文件下载成功，字节数组长度: {} bytes", fileBytes.length);
 
-        // CompletableFuture 实现超时控制，避免创建临时线程池
+        // 超时后中断解析线程。
         // 专业解析：PDF 禁用图片提取 + 按坐标排序、DOCX 禁用嵌入资源、正则清洗噪声
-        CompletableFuture<String> future = CompletableFuture.supplyAsync(
-                () -> documentParseService.parseContent(fileBytes, resume.getOriginalFilename()),
-                analysisExecutor);
+        Future<String> future = analysisExecutor.submit(
+                () -> documentParseService.parseContent(fileBytes, resume.getOriginalFilename()));
         try {
             text = future.get(30, TimeUnit.SECONDS);
         } catch (java.util.concurrent.TimeoutException e) {
@@ -261,6 +262,10 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
             throw new IllegalStateException("文本提取失败：解析超时（超过30秒）", e);
         } catch (java.util.concurrent.ExecutionException e) {
             throw new IllegalStateException("文本提取失败：" + e.getCause().getMessage(), e.getCause());
+        } catch (InterruptedException e) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw e;
         }
 
         if (text == null || text.isBlank()) {
@@ -268,8 +273,9 @@ public class AnalyzeStreamConsumer extends AbstractStreamConsumer<Long> {
         }
         log.info("✅ Tika 解析成功，文本长度: {}", text.length());
 
-        resume.setResumeText(text);
-        resumesMapper.updateById(resume);
+        resumesMapper.update(null, new LambdaUpdateWrapper<Resumes>()
+                .eq(Resumes::getId, resumeId)
+                .set(Resumes::getResumeText, text));
         log.info("💾 简历文本已保存到数据库");
         return text;
     }

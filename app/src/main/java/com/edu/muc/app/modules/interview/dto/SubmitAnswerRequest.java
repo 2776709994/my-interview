@@ -5,6 +5,6 @@ import lombok.Data;
 @Data
 public class SubmitAnswerRequest {
     private String sessionId;
-    private int questionIndex;
+    private Integer questionIndex;
     private String answer;
 }

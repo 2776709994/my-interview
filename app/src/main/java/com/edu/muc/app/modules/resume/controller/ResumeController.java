@@ -59,7 +59,7 @@ public class ResumeController {
         Resumes resume = resumesService.upload(file);
 
         Map<String, Object> result = new HashMap<>();
-        result.put("duplicate", false);
+        result.put("duplicate", resume.isDuplicate());
         result.put("storage", Map.of("resumeId", resume.getId()));
 
         return Result.success(result);
